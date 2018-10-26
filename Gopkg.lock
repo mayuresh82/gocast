@@ -350,6 +350,7 @@
     "github.com/golang/protobuf/ptypes/any",
     "github.com/osrg/gobgp/api",
     "github.com/osrg/gobgp/pkg/server",
+    "gopkg.in/yaml.v2",
   ]
   solver-name = "gps-cdcl"
   solver-version = 1

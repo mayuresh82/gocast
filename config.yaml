@@ -1,0 +1,22 @@
+agent:
+  # http server listen addr
+  listen_addr: :8080
+  # Interval for health check
+  monitor_interval: 10s
+  # Time to flush out inactive apps
+  cleanup_timer: 15m
+  # Consul api addr for dynamic discovery
+  consul_addr: https://consul
+  # interval to query consul for app discovery
+  consul_query_interval: 5m
+
+bgp:
+  local_as: 12345
+  remote_as: 6789
+  # override the peer IP to use instead of auto discovering
+  peer_ip: 10.10.10.1
+  communities:
+    - asn:nnnn
+    - asn:nnnn
+  origin: igp
+

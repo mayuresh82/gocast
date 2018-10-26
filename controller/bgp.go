@@ -5,30 +5,44 @@ import (
 	"fmt"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/ptypes/any"
+	c "github.com/mayuresh82/gocast/config"
 	api "github.com/osrg/gobgp/api"
 	gobgp "github.com/osrg/gobgp/pkg/server"
 	"net"
+	"strconv"
+	"strings"
 )
 
 type Controller struct {
 	peerAS          int
 	localIP, peerIP net.IP
+	communities     []string
+	origin          uint32
 	s               *gobgp.BgpServer
 }
 
-func NewController(localAS, peerAS int, peerIP string) (*Controller, error) {
+func NewController(config *c.Config) (*Controller, error) {
 	c := &Controller{}
-	if peerIP == "" {
+	if config.Bgp.PeerIP == "" {
 		gw, err := gateway()
 		if err != nil {
 			return nil, err
 		}
 		c.peerIP = gw
 	} else {
-		c.peerIP = net.ParseIP(peerIP)
+		c.peerIP = net.ParseIP(config.Bgp.PeerIP)
 	}
 	if c.peerIP == nil {
 		return nil, fmt.Errorf("Unable to get peer IP")
+	}
+	c.communities = config.Bgp.Communities
+	switch config.Bgp.Origin {
+	case "igp":
+		c.origin = 0
+	case "egp":
+		c.origin = 1
+	case "unknown":
+		c.origin = 2
 	}
 	s := gobgp.NewBgpServer()
 	go s.Serve()
@@ -39,7 +53,7 @@ func NewController(localAS, peerAS int, peerIP string) (*Controller, error) {
 	c.localIP = localAddr
 	if err := s.StartBgp(context.Background(), &api.StartBgpRequest{
 		Global: &api.Global{
-			As:         uint32(localAS),
+			As:         uint32(config.Bgp.LocalAS),
 			RouterId:   localAddr.String(),
 			ListenPort: -1, // gobgp won't listen on tcp:179
 		},
@@ -47,7 +61,7 @@ func NewController(localAS, peerAS int, peerIP string) (*Controller, error) {
 		return nil, fmt.Errorf("Unable to start bgp: %v", err)
 	}
 	c.s = s
-	c.peerAS = peerAS
+	c.peerAS = config.Bgp.PeerAS
 	return c, nil
 }
 
@@ -72,12 +86,19 @@ func (c *Controller) getApiPath(route *net.IPNet) *api.Path {
 		PrefixLen: uint32(prefixlen),
 	})
 	a1, _ := ptypes.MarshalAny(&api.OriginAttribute{
-		Origin: 0,
+		Origin: c.origin,
 	})
 	a2, _ := ptypes.MarshalAny(&api.NextHopAttribute{
 		NextHop: c.localIP.String(),
 	})
-	attrs := []*any.Any{a1, a2}
+	var communities []uint32
+	for _, comm := range c.communities {
+		communities = append(communities, convertCommunity(comm))
+	}
+	a3, _ := ptypes.MarshalAny(&api.CommunitiesAttribute{
+		Communities: communities,
+	})
+	attrs := []*any.Any{a1, a2, a3}
 	return &api.Path{
 		Family:    &api.Family{Afi: afi, Safi: api.Family_SAFI_UNICAST},
 		AnyNlri:   nlri,
@@ -133,4 +154,11 @@ func (c *Controller) Shutdown() error {
 		return err
 	}
 	return nil
+}
+
+func convertCommunity(comm string) uint32 {
+	parts := strings.Split(comm, ":")
+	first, _ := strconv.ParseUint(parts[0], 10, 32)
+	second, _ := strconv.ParseUint(parts[1], 10, 32)
+	return uint32(first)<<16 | uint32(second)
 }

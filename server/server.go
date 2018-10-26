@@ -46,7 +46,7 @@ func (s *Server) Serve(ctx context.Context) {
 
 func (s *Server) registerHandler(w http.ResponseWriter, r *http.Request) {
 	queries := r.URL.Query()
-	app, err := controller.NewApp(queries["name"][0], queries["vip"][0], queries["monitor"][0], queries["type"][0])
+	app, err := controller.NewApp(queries["name"][0], queries["vip"][0], queries["monitor"])
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
 		return
@@ -61,7 +61,9 @@ func (s *Server) unregisterHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request, need app name specified", http.StatusBadRequest)
 		return
 	}
+	s.mon.Lock()
 	s.mon.Remove(appName[0])
+	s.mon.Unlock()
 }
 
 func (s *Server) infoHandler(w http.ResponseWriter, r *http.Request) {

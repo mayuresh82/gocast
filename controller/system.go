@@ -33,20 +33,38 @@ func localAddress(gw net.IP) (net.IP, error) {
 }
 
 func addLoopback(name string, addr *net.IPNet) error {
-	mask := fmt.Sprintf("%d.%d.%d.%d", addr.Mask[0], addr.Mask[1], addr.Mask[2], addr.Mask[3])
-	cmd := fmt.Sprintf("ifconfig lo:%s %s netmask %s up", name, addr.IP.String(), mask)
+	prefixLen, _ := addr.Mask.Size()
+	label := fmt.Sprintf("lo:%s", name)
+	// linux kernel limits labels to 15 chars
+	if len(label) > 15 {
+		label = label[:15]
+	}
+	cmd := fmt.Sprintf("ip address add %s/%d dev lo label %s", addr.IP.String(), prefixLen, label)
 	_, err := exec.Command("bash", "-c", cmd).Output()
 	if err != nil {
-		return fmt.Errorf("Failed to Add loopback command: %v", err)
+		return fmt.Errorf("Failed to Add loopback command: %s: %v", cmd, err)
 	}
 	return nil
 }
 
-func deleteLoopback(name string) error {
-	cmd := fmt.Sprintf("ifconfig lo:%s down", name)
+func deleteLoopback(addr *net.IPNet) error {
+	prefixLen, _ := addr.Mask.Size()
+	cmd := fmt.Sprintf("ip address delete %s/%d dev lo", addr.IP.String(), prefixLen)
 	_, err := exec.Command("bash", "-c", cmd).Output()
 	if err != nil {
-		return fmt.Errorf("Failed to delete loopback command: %v", err)
+		return fmt.Errorf("Failed to delete loopback command: %s: %v", cmd, err)
+	}
+	return nil
+}
+
+func natRule(op string, vip, localAddr net.IP, port, protocol string) error {
+	cmd := fmt.Sprintf(
+		"iptables -t nat -%s PREROUTING -p %s -d %s --dport %s -j DNAT --to-destination %s:%s",
+		op, protocol, vip.String(), port, localAddr.String(), port,
+	)
+	_, err := exec.Command("bash", "-c", cmd).Output()
+	if err != nil {
+		return fmt.Errorf("Failed to %s nat rule: %s: %v", op, cmd, err)
 	}
 	return nil
 }

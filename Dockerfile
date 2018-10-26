@@ -6,13 +6,13 @@ RUN apk update && \
 RUN mkdir -p /opt/gocast
 RUN mkdir -p /go/src/github.com/mayuresh82
 RUN cd /go/src/github.com/mayuresh82 && \
-    git clone --branch dev https://github.com/mayuresh82/gocast
+    git clone https://github.com/mayuresh82/gocast
 WORKDIR /go/src/github.com/mayuresh82/gocast
 RUN make
 RUN cp gocast /opt/gocast/
 
 FROM alpine:latest
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add ca-certificates bash iptables netcat-openbsd sudo
 WORKDIR /root/
 COPY --from=builder /opt/gocast/gocast .
 
