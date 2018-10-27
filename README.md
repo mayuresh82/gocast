@@ -41,8 +41,11 @@ GoCast supports consul for automatic service discovery and healthchecking. For t
 - The host running GoCast needs to have the environment variable **CONSUL_NODE** set to the hostname in consul
 
 - The following tags must be set in consul for autodiscovery to work:
+
 `enable_gocast` : required
+
 `gocast_vip=<addr/mask>`: required
+
 `gocast_monitor=monitor:params`: optional
 
 If `gocast_monitor=consul` is specified, then GoCast uses the defined healthchecks in consul as the health monitors for the service.
