@@ -61,3 +61,7 @@ Certain orchestration solutions such as Nomad run the docker containers with pub
 - Start the service container in host networking mode OR
 
 - Register NAT rules for your service with GoCast for the required protocol/port(s). GoCast will then create iptables NAT rules that map traffic destined to the assigned VIP to the physical IP address. This is achieved by adding the `nat=protocol:port` tag(s) in consul or the http query.
+
+**Why not just use ExaBGP or something similar ?**
+
+ExaBGP is commonly used for this purpose, with bash scripts and such.  However, I found that there no standard way of doing things and there is little to no support for containerized services. Also ExaBGP's API is clunky and documentation is almost non existent. GoCast provides an out of the box solution without hacking together a bunch of scripts.
