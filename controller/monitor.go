@@ -7,6 +7,7 @@ import (
 	api "github.com/osrg/gobgp/api"
 	"net"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -137,6 +138,7 @@ func (m *MonitorMgr) Add(app *App) {
 	defer m.Unlock()
 	for _, appMon := range m.monitors {
 		if appMon.app.Equal(app) && appMon.checkOn {
+			glog.V(2).Infof("App %s already exists", app.Name)
 			return
 		}
 		if appMon.app.Vip.String() == app.Vip.String() && appMon.app.Name != app.Name {
@@ -161,16 +163,24 @@ func (m *MonitorMgr) Remove(appName string) {
 				glog.Errorf("Failed to withdraw route: %v", err)
 			}
 		}
-		deleteLoopback(a.app.Vip)
-		if ok, mon := a.app.needsNatRule(); ok {
-			natRule("D", a.app.Vip.IP, m.ctrl.localIP, mon.Port, mon.Protocol)
+		if err := deleteLoopback(a.app.Vip); err != nil {
+			glog.Errorf("Failed to remove app: %s: %v", a.app.Name, err)
+		}
+		for _, nat := range a.app.Nats {
+			parts := strings.Split(nat, ":")
+			if len(parts) != 2 {
+				continue
+			}
+			if err := natRule("D", a.app.Vip.IP, m.ctrl.localIP, parts[0], parts[1]); err != nil {
+				glog.Errorf("Failed to remove app: %s: %v", a.app.Name, err)
+			}
 		}
 	}
 	delete(m.monitors, appName)
 }
 func (m *MonitorMgr) runMonitors(app *App) bool {
-	var check bool
 	for _, mon := range app.Monitors {
+		var check bool
 		switch mon.Type {
 		case Monitor_PORT:
 			check = portMonitor(mon.Protocol, mon.Port)
@@ -201,8 +211,12 @@ func (m *MonitorMgr) checkCond(am *appMon) error {
 			if err := addLoopback(app.Name, app.Vip); err != nil {
 				return err
 			}
-			if ok, mon := app.needsNatRule(); ok {
-				if err := natRule("A", app.Vip.IP, m.ctrl.localIP, mon.Port, mon.Protocol); err != nil {
+			for _, nat := range app.Nats {
+				parts := strings.Split(nat, ":")
+				if len(parts) != 2 {
+					continue
+				}
+				if err := natRule("A", app.Vip.IP, m.ctrl.localIP, parts[0], parts[1]); err != nil {
 					return err
 				}
 			}
@@ -258,8 +272,12 @@ func (m *MonitorMgr) CloseAll() {
 			am.done <- true
 		}
 		deleteLoopback(am.app.Vip)
-		if ok, mon := am.app.needsNatRule(); ok {
-			natRule("D", am.app.Vip.IP, m.ctrl.localIP, mon.Port, mon.Protocol)
+		for _, nat := range am.app.Nats {
+			parts := strings.Split(nat, ":")
+			if len(parts) != 2 {
+				continue
+			}
+			natRule("D", am.app.Vip.IP, m.ctrl.localIP, parts[0], parts[1])
 		}
 	}
 }

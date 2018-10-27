@@ -46,7 +46,7 @@ func (s *Server) Serve(ctx context.Context) {
 
 func (s *Server) registerHandler(w http.ResponseWriter, r *http.Request) {
 	queries := r.URL.Query()
-	app, err := controller.NewApp(queries["name"][0], queries["vip"][0], queries["monitor"])
+	app, err := controller.NewApp(queries["name"][0], queries["vip"][0], queries["monitor"], queries["nat"])
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
 		return

@@ -65,6 +65,7 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 		var (
 			vip      string
 			monitors []string
+			nats     []string
 		)
 		for _, tag := range service.Tags {
 			// try to find the requires tags. Only vip is mandatory
@@ -73,17 +74,19 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 				continue
 			}
 			switch parts[0] {
-			case "vip":
+			case "gocast_vip":
 				vip = parts[1]
-			case "monitor":
+			case "gocast_monitor":
 				monitors = append(monitors, parts[1])
+			case "gocast_nat":
+				nats = append(nats, parts[1])
 			}
 		}
 		if vip == "" {
 			glog.Errorf("No vip Tag found in matched service :%s", service.Service)
 			continue
 		}
-		app, err := NewApp(service.Service, vip, monitors)
+		app, err := NewApp(service.Service, vip, monitors, nats)
 		if err != nil {
 			glog.Errorf("Unable to add consul app: %v", err)
 			continue

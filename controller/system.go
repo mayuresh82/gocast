@@ -33,6 +33,7 @@ func localAddress(gw net.IP) (net.IP, error) {
 }
 
 func addLoopback(name string, addr *net.IPNet) error {
+	deleteLoopback(addr)
 	prefixLen, _ := addr.Mask.Size()
 	label := fmt.Sprintf("lo:%s", name)
 	// linux kernel limits labels to 15 chars
@@ -57,7 +58,7 @@ func deleteLoopback(addr *net.IPNet) error {
 	return nil
 }
 
-func natRule(op string, vip, localAddr net.IP, port, protocol string) error {
+func natRule(op string, vip, localAddr net.IP, protocol, port string) error {
 	cmd := fmt.Sprintf(
 		"iptables -t nat -%s PREROUTING -p %s -d %s --dport %s -j DNAT --to-destination %s:%s",
 		op, protocol, vip.String(), port, localAddr.String(), port,
