@@ -23,6 +23,12 @@ type Config struct {
 		Communities []string
 		Origin      string
 	}
+	Apps []struct {
+		Name     string
+		Vip      string
+		Monitors []string
+		Nats     []string
+	}
 }
 
 func GetConfig(file string) *Config {

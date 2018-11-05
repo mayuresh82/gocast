@@ -95,6 +95,15 @@ func NewMonitor(config *c.Config) *MonitorMgr {
 		config.Agent.CleanupTimer = defaultCleanupTimer
 	}
 	mon.config = config
+	// add apps defined in config
+	for _, a := range config.Apps {
+		app, err := NewApp(a.Name, a.Vip, a.Monitors, a.Nats)
+		if err != nil {
+			glog.Errorf("Failed to add configured app %s: %v", a.Name, err)
+			continue
+		}
+		mon.Add(app)
+	}
 	return mon
 }
 
