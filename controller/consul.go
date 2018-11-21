@@ -110,8 +110,13 @@ func (c *ConsulMon) healthCheck(service string) (bool, error) {
 	}
 	for _, nodeInfo := range data {
 		n := nodeInfo.(map[string]interface{})
-		if n["Node"] == c.node && n["Status"].(string) == "passing" {
-			return true, nil
+		if n["Node"] == c.node {
+			if n["Status"].(string) == "passing" {
+				return true, nil
+			} else {
+				glog.V(2).Infof("Consul Healthcheck returned %s status", n["Status"].(string))
+				return false, nil
+			}
 		}
 	}
 	return false, fmt.Errorf("No healcheck info found for node %s in consul", c.node)
