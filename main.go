@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"github.com/golang/glog"
 	c "github.com/mayuresh82/gocast/config"
 	"github.com/mayuresh82/gocast/controller"
 	"github.com/mayuresh82/gocast/server"
