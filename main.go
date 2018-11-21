@@ -6,6 +6,7 @@ import (
 	c "github.com/mayuresh82/gocast/config"
 	"github.com/mayuresh82/gocast/controller"
 	"github.com/mayuresh82/gocast/server"
+	log "github.com/sirupsen/logrus"
 	"os"
 	"os/signal"
 	"syscall"
@@ -16,6 +17,9 @@ var (
 )
 
 func main() {
+	if glog.V(4) {
+		log.SetLevel(log.DebugLevel)
+	}
 	flag.Parse()
 	conf := c.GetConfig(*config)
 	mon := controller.NewMonitor(conf)
