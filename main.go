@@ -18,10 +18,10 @@ var (
 )
 
 func main() {
+	flag.Parse()
 	if glog.V(4) {
 		log.SetLevel(log.DebugLevel)
 	}
-	flag.Parse()
 	conf := c.GetConfig(*config)
 	mon := controller.NewMonitor(conf)
 	srv := server.NewServer(conf.Agent.ListenAddr, mon)
