@@ -18,22 +18,23 @@ type Controller struct {
 	localIP, peerIP net.IP
 	communities     []string
 	origin          uint32
+	multiHop        bool
 	s               *gobgp.BgpServer
 }
 
 func NewController(config *c.Config) (*Controller, error) {
 	c := &Controller{}
+	var gw net.IP
+	var err error
 	if config.Bgp.PeerIP == "" {
-		gw, err := gateway()
-		if err != nil {
-			return nil, err
-		}
+		gw, err = gateway()
 		c.peerIP = gw
 	} else {
 		c.peerIP = net.ParseIP(config.Bgp.PeerIP)
+		gw, err = via(c.peerIP)
 	}
-	if c.peerIP == nil {
-		return nil, fmt.Errorf("Unable to get peer IP")
+	if err != nil || c.peerIP == nil {
+		return nil, fmt.Errorf("Unable to get peer IP : %v", err)
 	}
 	c.communities = config.Bgp.Communities
 	switch config.Bgp.Origin {
@@ -46,7 +47,7 @@ func NewController(config *c.Config) (*Controller, error) {
 	}
 	s := gobgp.NewBgpServer()
 	go s.Serve()
-	localAddr, err := localAddress(c.peerIP)
+	localAddr, err := localAddress(gw)
 	if err != nil {
 		return nil, err
 	}
@@ -62,6 +63,10 @@ func NewController(config *c.Config) (*Controller, error) {
 	}
 	c.s = s
 	c.peerAS = config.Bgp.PeerAS
+	// set mh by default for all ebgp peers
+	if c.peerAS != config.Bgp.LocalAS {
+		c.multiHop = true
+	}
 	return c, nil
 }
 
@@ -71,6 +76,9 @@ func (c *Controller) AddPeer(peer string) error {
 			NeighborAddress: peer,
 			PeerAs:          uint32(c.peerAS),
 		},
+	}
+	if c.multiHop {
+		n.EbgpMultihop = &api.EbgpMultihop{Enabled: true, MultihopTtl: uint32(255)}
 	}
 	return c.s.AddPeer(context.Background(), &api.AddPeerRequest{Peer: n})
 }

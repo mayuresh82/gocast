@@ -16,6 +16,15 @@ func gateway() (net.IP, error) {
 	return net.ParseIP(strings.TrimSpace(string(out))), nil
 }
 
+func via(dest net.IP) (net.IP, error) {
+	cmd := fmt.Sprintf(`ip route get %s | grep via | cut -d" " -f3`, dest.String())
+	out, err := exec.Command("bash", "-c", cmd).Output()
+	if err != nil {
+		return nil, fmt.Errorf("Failed to execute command: %s", cmd)
+	}
+	return net.ParseIP(strings.TrimSpace(string(out))), nil
+}
+
 func localAddress(gw net.IP) (net.IP, error) {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
