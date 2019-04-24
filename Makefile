@@ -1,19 +1,23 @@
 .PHONY: all gocast test
 
+DOCKER_IMAGE := mayuresh82/gocast
+VERSION := $(shell git describe --exact-match --tags 2>/dev/null)
+BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
+COMMIT := $(shell git rev-parse --short HEAD)
+DOCKER_TAG := $(COMMIT)
+LDFLAGS := $(LDFLAGS) -X main.commit=$(COMMIT) -X main.branch=$(BRANCH)
+ifdef VERSION
+    LDFLAGS += -X main.version=$(VERSION)
+	DOCKER_TAG = $(VERSION)
+endif
+
 all:
-	$(MAKE) deps
 	$(MAKE) gocast
 
-deps:
-	go get -u golang.org/x/lint/golint
-	go get -u github.com/golang/dep/cmd/dep
-	dep ensure
-
 gocast:
-	go build .
+	go build -ldflags "$(LDFLAGS)" .
 
 debug:
-	dep ensure
 	go build -race .
 
 test:

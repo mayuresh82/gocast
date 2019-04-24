@@ -1,11 +1,12 @@
 package config
 
 import (
-	"github.com/golang/glog"
-	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"path/filepath"
 	"time"
+
+	"github.com/golang/glog"
+	"gopkg.in/yaml.v2"
 )
 
 type Config struct {
@@ -16,12 +17,13 @@ type Config struct {
 		ConsulAddr          string        `yaml:"consul_addr"`
 		ConsulQueryInterval time.Duration `yaml:"consul_query_interval"`
 	}
-	Bgp struct {
+	Bgp []struct {
 		LocalAS     int    `yaml:"local_as"`
 		PeerAS      int    `yaml:"peer_as"`
 		PeerIP      string `yaml:"peer_ip"`
 		Communities []string
 		Origin      string
+		AddrFamily  string `yaml:"addr_family"`
 	}
 	Apps []struct {
 		Name     string

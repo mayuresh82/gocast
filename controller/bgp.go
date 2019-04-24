@@ -3,160 +3,214 @@ package controller
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
+	"strings"
+
 	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/ptypes/any"
 	c "github.com/mayuresh82/gocast/config"
 	api "github.com/osrg/gobgp/api"
 	gobgp "github.com/osrg/gobgp/pkg/server"
-	"net"
-	"strconv"
-	"strings"
 )
 
-type Controller struct {
+type Peer struct {
 	peerAS          int
 	localIP, peerIP net.IP
 	communities     []string
 	origin          uint32
 	multiHop        bool
-	s               *gobgp.BgpServer
+	family          string
+	announced       []string
+}
+
+type Controller struct {
+	peers []*Peer
+	s     *gobgp.BgpServer
 }
 
 func NewController(config *c.Config) (*Controller, error) {
-	c := &Controller{}
-	var gw net.IP
-	var err error
-	if config.Bgp.PeerIP == "" {
-		gw, err = gateway()
-		c.peerIP = gw
-	} else {
-		c.peerIP = net.ParseIP(config.Bgp.PeerIP)
-		gw, err = via(c.peerIP)
-	}
-	if err != nil || c.peerIP == nil {
-		return nil, fmt.Errorf("Unable to get peer IP : %v", err)
-	}
-	c.communities = config.Bgp.Communities
-	switch config.Bgp.Origin {
-	case "igp":
-		c.origin = 0
-	case "egp":
-		c.origin = 1
-	case "unknown":
-		c.origin = 2
-	}
-	s := gobgp.NewBgpServer()
-	go s.Serve()
-	localAddr, err := localAddress(gw)
-	if err != nil {
-		return nil, err
-	}
-	c.localIP = localAddr
-	if err := s.StartBgp(context.Background(), &api.StartBgpRequest{
-		Global: &api.Global{
-			As:         uint32(config.Bgp.LocalAS),
-			RouterId:   localAddr.String(),
-			ListenPort: -1, // gobgp won't listen on tcp:179
-		},
-	}); err != nil {
-		return nil, fmt.Errorf("Unable to start bgp: %v", err)
-	}
-	c.s = s
-	c.peerAS = config.Bgp.PeerAS
-	// set mh by default for all ebgp peers
-	if c.peerAS != config.Bgp.LocalAS {
-		c.multiHop = true
+	c := &Controller{s: gobgp.NewBgpServer()}
+	go c.s.Serve()
+	for _, bgpConf := range config.Bgp {
+		p := &Peer{}
+		var err error
+		if bgpConf.PeerIP == "" {
+			p.peerIP, err = gateway(bgpConf.AddrFamily)
+		} else {
+			p.peerIP = net.ParseIP(bgpConf.PeerIP)
+		}
+		if err != nil || p.peerIP == nil {
+			return nil, fmt.Errorf("Unable to get peer IP : %v", err)
+		}
+		p.communities = bgpConf.Communities
+		switch bgpConf.Origin {
+		case "igp":
+			p.origin = 0
+		case "egp":
+			p.origin = 1
+		case "unknown":
+			p.origin = 2
+		}
+		dev, err := via(p.peerIP)
+		if err != nil {
+			return nil, err
+		}
+		localAddr, err := localAddress(dev, bgpConf.AddrFamily)
+		if err != nil {
+			return nil, err
+		}
+		p.localIP = localAddr
+		p.peerAS = bgpConf.PeerAS
+		// set mh by default for all ebgp peers
+		if p.peerAS != bgpConf.LocalAS {
+			p.multiHop = true
+		}
+		localAddr4, _ := localAddress(dev, "4") // for router-id
+		if err := c.s.StartBgp(context.Background(), &api.StartBgpRequest{
+			Global: &api.Global{
+				As:         uint32(bgpConf.LocalAS),
+				RouterId:   localAddr4.String(),
+				ListenPort: -1, // gobgp won't listen on tcp:179
+			},
+		}); err != nil {
+			return nil, fmt.Errorf("Unable to start bgp: %v", err)
+		}
+		p.family = "6"
+		if p.peerIP.To4() != nil {
+			p.family = "4"
+		}
+		c.peers = append(c.peers, p)
 	}
 	return c, nil
 }
 
-func (c *Controller) AddPeer(peer string) error {
+func (c *Controller) localIP(family string) net.IP {
+	for _, peer := range c.peers {
+		if peer.family == family {
+			return peer.localIP
+		}
+	}
+	return nil
+}
+
+func (c *Controller) AddPeer(p *Peer) error {
 	n := &api.Peer{
 		Conf: &api.PeerConf{
-			NeighborAddress: peer,
-			PeerAs:          uint32(c.peerAS),
+			NeighborAddress: p.peerIP.String(),
+			PeerAs:          uint32(p.peerAS),
 		},
 	}
-	if c.multiHop {
+	if p.multiHop {
 		n.EbgpMultihop = &api.EbgpMultihop{Enabled: true, MultihopTtl: uint32(255)}
 	}
 	return c.s.AddPeer(context.Background(), &api.AddPeerRequest{Peer: n})
 }
 
-func (c *Controller) getApiPath(route *net.IPNet) *api.Path {
+func (c *Controller) getApiPath(p *Peer, route *net.IPNet, withdraw bool) *api.Path {
 	afi := api.Family_AFI_IP
 	if route.IP.To4() == nil {
 		afi = api.Family_AFI_IP6
 	}
+	family := &api.Family{Afi: afi, Safi: api.Family_SAFI_UNICAST}
 	prefixlen, _ := route.Mask.Size()
 	nlri, _ := ptypes.MarshalAny(&api.IPAddressPrefix{
 		Prefix:    route.IP.String(),
 		PrefixLen: uint32(prefixlen),
 	})
 	a1, _ := ptypes.MarshalAny(&api.OriginAttribute{
-		Origin: c.origin,
-	})
-	a2, _ := ptypes.MarshalAny(&api.NextHopAttribute{
-		NextHop: c.localIP.String(),
+		Origin: p.origin,
 	})
 	var communities []uint32
-	for _, comm := range c.communities {
+	for _, comm := range p.communities {
 		communities = append(communities, convertCommunity(comm))
 	}
-	a3, _ := ptypes.MarshalAny(&api.CommunitiesAttribute{
+	a2, _ := ptypes.MarshalAny(&api.CommunitiesAttribute{
 		Communities: communities,
 	})
-	attrs := []*any.Any{a1, a2, a3}
-	return &api.Path{
-		Family:    &api.Family{Afi: afi, Safi: api.Family_SAFI_UNICAST},
-		AnyNlri:   nlri,
-		AnyPattrs: attrs,
+	attrs := []*any.Any{a1, a2}
+	path := &api.Path{AnyNlri: nlri, Family: family, AnyPattrs: attrs, IsWithdraw: withdraw}
+	switch afi {
+	case api.Family_AFI_IP:
+		nh, _ := ptypes.MarshalAny(&api.NextHopAttribute{
+			NextHop: p.localIP.String(),
+		})
+		path.AnyPattrs = append(path.AnyPattrs, nh)
+	case api.Family_AFI_IP6:
+		mpReachAttr, _ := ptypes.MarshalAny(&api.MpReachNLRIAttribute{
+			Family:   family,
+			NextHops: []string{p.localIP.String()},
+			Nlris:    []*any.Any{nlri},
+		})
+		mpUnreachAttr, _ := ptypes.MarshalAny(&api.MpUnreachNLRIAttribute{
+			Family: family,
+			Nlris:  []*any.Any{nlri},
+		})
+		if withdraw {
+			path.AnyPattrs = append(path.AnyPattrs, mpUnreachAttr)
+		} else {
+			path.AnyPattrs = append(path.AnyPattrs, mpReachAttr)
+		}
 	}
+	return path
 }
 
 func (c *Controller) Announce(route *net.IPNet) error {
-	peers, err := c.s.ListPeer(context.Background(), &api.ListPeerRequest{})
-	if err != nil {
-		return err
+	family := "6"
+	if route.IP.To4() != nil {
+		family = "4"
 	}
-	var found bool
-	for _, p := range peers {
-		if p.Conf.NeighborAddress == c.peerIP.String() {
-			found = true
-			break
+	for _, peer := range c.peers {
+		if peer.family != family {
+			continue
 		}
-	}
-	if !found {
-		if err := c.AddPeer(c.peerIP.String()); err != nil {
+		peers, err := c.s.ListPeer(context.Background(), &api.ListPeerRequest{})
+		if err != nil {
 			return err
 		}
+		var found bool
+		for _, p := range peers {
+			if p.Conf.NeighborAddress == peer.peerIP.String() {
+				found = true
+				break
+			}
+		}
+		if !found {
+			if err := c.AddPeer(peer); err != nil {
+				return err
+			}
+		}
+		if _, err := c.s.AddPath(context.Background(), &api.AddPathRequest{Path: c.getApiPath(peer, route, false)}); err != nil {
+			return err
+		}
+		peer.announced = append(peer.announced, route.String())
 	}
-	_, err = c.s.AddPath(context.Background(), &api.AddPathRequest{Path: c.getApiPath(route)})
-	return err
+	return nil
 }
 
 func (c *Controller) Withdraw(route *net.IPNet) error {
-	return c.s.DeletePath(context.Background(), &api.DeletePathRequest{Path: c.getApiPath(route)})
-}
-
-func (c *Controller) PeerInfo() (*api.Peer, error) {
-	peers, err := c.s.ListPeer(context.Background(), &api.ListPeerRequest{})
-	if err != nil {
-		return nil, err
-	}
-	for _, p := range peers {
-		if p.Conf.NeighborAddress == c.peerIP.String() {
-			return p, nil
+	for _, peer := range c.peers {
+		if !contains(peer.announced, route.String()) {
+			continue
+		}
+		if err := c.s.DeletePath(context.Background(), &api.DeletePathRequest{Path: c.getApiPath(peer, route, true)}); err != nil {
+			return err
 		}
 	}
-	return nil, nil
+	return nil
+}
+
+func (c *Controller) PeerInfo() ([]*api.Peer, error) {
+	return c.s.ListPeer(context.Background(), &api.ListPeerRequest{})
 }
 
 func (c *Controller) Shutdown() error {
-	if err := c.s.ShutdownPeer(context.Background(), &api.ShutdownPeerRequest{
-		Address: c.peerIP.String(),
-	}); err != nil {
-		return err
+	for _, peer := range c.peers {
+		if err := c.s.ShutdownPeer(context.Background(), &api.ShutdownPeerRequest{
+			Address: peer.peerIP.String(),
+		}); err != nil {
+			return err
+		}
 	}
 	if err := c.s.StopBgp(context.Background(), &api.StopBgpRequest{}); err != nil {
 		return err

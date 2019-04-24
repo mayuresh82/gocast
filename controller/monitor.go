@@ -2,18 +2,19 @@ package controller
 
 import (
 	"fmt"
-	"github.com/golang/glog"
-	c "github.com/mayuresh82/gocast/config"
-	api "github.com/osrg/gobgp/api"
 	"net"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/golang/glog"
+	c "github.com/mayuresh82/gocast/config"
+	api "github.com/osrg/gobgp/api"
 )
 
 const (
-	defaultMonitorInterval = 10 * time.Second
+	defaultMonitorInterval = 20 * time.Second
 	defaultCleanupTimer    = 15 * time.Minute
 )
 
@@ -53,12 +54,14 @@ func execMonitor(cmd string) bool {
 }
 
 type appMon struct {
-	app       *App
-	done      chan bool
-	announced bool
-	checkOn   bool
+	app        *App
+	done       chan bool
+	announced  bool
+	vipCreated bool
+	checkOn    bool
 }
 
+// MonitorMgr manages all registered apps and their healthcheck monitors
 type MonitorMgr struct {
 	monitors map[string]*appMon
 	cleanups map[string]chan bool
@@ -69,6 +72,7 @@ type MonitorMgr struct {
 	sync.Mutex
 }
 
+// NewMonitor returns a new instance of MonitorMgr
 func NewMonitor(config *c.Config) *MonitorMgr {
 	ctrl, err := NewController(config)
 	if err != nil {
@@ -141,6 +145,7 @@ func (m *MonitorMgr) consulMon() {
 	}
 }
 
+// Add adds a new app to be monitored
 func (m *MonitorMgr) Add(app *App) {
 	// check if already running
 	m.Lock()
@@ -150,8 +155,8 @@ func (m *MonitorMgr) Add(app *App) {
 			glog.V(2).Infof("App %s already exists", app.Name)
 			return
 		}
-		if appMon.app.Vip.String() == app.Vip.String() && appMon.app.Name != app.Name {
-			glog.Errorf("Error: Vip %s is already being announced by app: %s", app.Vip.String(), appMon.app.Name)
+		if appMon.app.Vip.Equal(app.Vip) && appMon.app.Name != app.Name {
+			glog.Errorf("Error: Vip %s is already being announced by app: %s", app.Vip.IP.String(), appMon.app.Name)
 			return
 		}
 	}
@@ -162,15 +167,19 @@ func (m *MonitorMgr) Add(app *App) {
 	glog.Infof("Registered a new app: %v", app)
 }
 
+// Remove removes an existing app and withdraws the bgp vip
 func (m *MonitorMgr) Remove(appName string) {
 	if a, ok := m.monitors[appName]; ok {
 		if a.checkOn {
 			a.done <- true
 		}
 		if a.announced {
-			if err := m.ctrl.Withdraw(a.app.Vip); err != nil {
+			if err := m.ctrl.Withdraw(a.app.Vip.Net); err != nil {
 				glog.Errorf("Failed to withdraw route: %v", err)
 			}
+		}
+		if !a.vipCreated {
+			return
 		}
 		if err := deleteLoopback(a.app.Vip); err != nil {
 			glog.Errorf("Failed to remove app: %s: %v", a.app.Name, err)
@@ -180,7 +189,12 @@ func (m *MonitorMgr) Remove(appName string) {
 			if len(parts) != 2 {
 				continue
 			}
-			if err := natRule("D", a.app.Vip.IP, m.ctrl.localIP, parts[0], parts[1]); err != nil {
+			localIP := m.ctrl.localIP(a.app.Vip.Family)
+			if localIP == nil {
+				glog.Errorf("Failed to get local IP for family %s", a.app.Vip.Family)
+				continue
+			}
+			if err := natRule("D", a.app.Vip.IP, localIP, parts[0], parts[1]); err != nil {
 				glog.Errorf("Failed to remove app: %s: %v", a.app.Name, err)
 			}
 		}
@@ -204,9 +218,16 @@ func (m *MonitorMgr) runMonitors(app *App) bool {
 		}
 		if !check {
 			glog.V(2).Infof("%s Monitor for app: %s Failed", mon.Type.String(), app.Name)
-			return false
+			if mon.FailCount >= defaultFailThreshold {
+				return false
+			}
+			mon.FailCount++
+		}
+		if check {
+			mon.FailCount = 0
 		}
 	}
+	glog.V(2).Infof("All Monitors for app: %s succeeded", app.Name)
 	return true
 }
 
@@ -215,8 +236,7 @@ func (m *MonitorMgr) checkCond(am *appMon) error {
 	m.Lock()
 	defer m.Unlock()
 	if m.runMonitors(app) {
-		glog.V(2).Infof("All Monitors for app: %s succeeded", app.Name)
-		if !am.announced {
+		if !am.vipCreated {
 			if err := addLoopback(app.Name, app.Vip); err != nil {
 				return err
 			}
@@ -225,11 +245,19 @@ func (m *MonitorMgr) checkCond(am *appMon) error {
 				if len(parts) != 2 {
 					continue
 				}
-				if err := natRule("A", app.Vip.IP, m.ctrl.localIP, parts[0], parts[1]); err != nil {
+				localIP := m.ctrl.localIP(app.Vip.Family)
+				if localIP == nil {
+					glog.Errorf("Failed to get local IP for family %s", app.Vip.Family)
+					continue
+				}
+				if err := natRule("A", app.Vip.IP, localIP, parts[0], parts[1]); err != nil {
 					return err
 				}
 			}
-			if err := m.ctrl.Announce(app.Vip); err != nil {
+			am.vipCreated = true
+		}
+		if !am.announced {
+			if err := m.ctrl.Announce(app.Vip.Net); err != nil {
 				return fmt.Errorf("Failed to announce route: %v", err)
 			}
 			am.announced = true
@@ -239,7 +267,7 @@ func (m *MonitorMgr) checkCond(am *appMon) error {
 		}
 	} else {
 		if am.announced {
-			if err := m.ctrl.Withdraw(app.Vip); err != nil {
+			if err := m.ctrl.Withdraw(app.Vip.Net); err != nil {
 				return fmt.Errorf("Failed to withdraw route: %v", err)
 			}
 			am.announced = false
@@ -271,6 +299,7 @@ func (m *MonitorMgr) runLoop(am *appMon) {
 	}
 }
 
+// CloseAll closes all open bgp sessions and cleans up all apps and their VIPs
 func (m *MonitorMgr) CloseAll() {
 	glog.Infof("Shutting down all open bgp sessions")
 	if err := m.ctrl.Shutdown(); err != nil {
@@ -286,11 +315,17 @@ func (m *MonitorMgr) CloseAll() {
 			if len(parts) != 2 {
 				continue
 			}
-			natRule("D", am.app.Vip.IP, m.ctrl.localIP, parts[0], parts[1])
+			localIP := m.ctrl.localIP(am.app.Vip.Family)
+			if localIP == nil {
+				glog.Errorf("Failed to get local IP for family %s", am.app.Vip.Family)
+				continue
+			}
+			natRule("D", am.app.Vip.IP, localIP, parts[0], parts[1])
 		}
 	}
 }
 
+// Cleanup waits for cleanuptimer to expire and then removes the app
 func (m *MonitorMgr) Cleanup(app string, exit chan bool) {
 	t := time.NewTimer(m.config.Agent.CleanupTimer)
 	defer t.Stop()
@@ -307,6 +342,7 @@ func (m *MonitorMgr) Cleanup(app string, exit chan bool) {
 	}
 }
 
-func (m *MonitorMgr) GetInfo() (*api.Peer, error) {
+// GetInfo returns BGP peer info for a specific peer
+func (m *MonitorMgr) GetInfo() ([]*api.Peer, error) {
 	return m.ctrl.PeerInfo()
 }
