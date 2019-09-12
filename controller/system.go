@@ -22,6 +22,10 @@ func via(dest net.IP) (net.IP, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Failed to execute command: %s", cmd)
 	}
+	if string(out) == "" {
+		// assume the provided dest is the next hop
+		return dest, nil
+	}
 	return net.ParseIP(strings.TrimSpace(string(out))), nil
 }
 
