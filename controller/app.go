@@ -53,6 +53,7 @@ type App struct {
 	Vip      *net.IPNet
 	Monitors Monitors
 	Nats     []string
+	Source   string
 }
 
 func (a *App) Equal(other *App) bool {
@@ -67,11 +68,11 @@ func (a *App) Equal(other *App) bool {
 	return a.Name == other.Name && a.Vip.String() == other.Vip.String()
 }
 
-func NewApp(appName, vip string, monitors []string, nats []string) (*App, error) {
+func NewApp(appName, vip string, monitors []string, nats []string, source string) (*App, error) {
 	if appName == "" {
 		return nil, fmt.Errorf("Invalid app name")
 	}
-	app := &App{Name: appName, Nats: nats}
+	app := &App{Name: appName, Nats: nats, Source: source}
 	_, ipnet, err := net.ParseCIDR(vip)
 	if err != nil {
 		return nil, fmt.Errorf("Invalid VIP specified, need ip/mask")
