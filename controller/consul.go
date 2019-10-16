@@ -86,7 +86,7 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 			glog.Errorf("No vip Tag found in matched service :%s", service.Service)
 			continue
 		}
-		app, err := NewApp(service.Service, vip, monitors, nats)
+		app, err := NewApp(service.Service, vip, monitors, nats, "consul")
 		if err != nil {
 			glog.Errorf("Unable to add consul app: %v", err)
 			continue

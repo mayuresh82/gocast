@@ -1,23 +1,16 @@
 .PHONY: all gocast test
 
 all:
-	$(MAKE) deps
 	$(MAKE) gocast
 
-deps:
-	go get -u golang.org/x/lint/golint
-	go get -u github.com/golang/dep/cmd/dep
-	dep ensure
-
 gocast:
-	go build .
+	go build -mod=vendor .
 
 debug:
-	dep ensure
-	go build -race .
+	go build -mod=vendor -race .
 
 test:
-	go test -v -race -short -failfast ./...
+	go test -v -race -short -failfast -mod=vendor ./...
 
 linux:
-	GOOS=linux GOARCH=amd64 go build -o gocast_linux .
+	GOOS=linux GOARCH=amd64 go build -o gocast_linux -mod=vendor .

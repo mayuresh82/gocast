@@ -97,7 +97,7 @@ func NewMonitor(config *c.Config) *MonitorMgr {
 	mon.config = config
 	// add apps defined in config
 	for _, a := range config.Apps {
-		app, err := NewApp(a.Name, a.Vip, a.Monitors, a.Nats)
+		app, err := NewApp(a.Name, a.Vip, a.Monitors, a.Nats, "config")
 		if err != nil {
 			glog.Errorf("Failed to add configured app %s: %v", a.Name, err)
 			continue
@@ -119,7 +119,10 @@ func (m *MonitorMgr) consulMon() {
 			// remove currently running apps that are not discovered in this pass
 			var toRemove []string
 			m.Lock()
-			for name := range m.monitors {
+			for name, mon := range m.monitors {
+				if mon.app.Source != "consul" {
+					continue
+				}
 				var found bool
 				for _, app := range apps {
 					if name == app.Name {
