@@ -9,7 +9,7 @@ require (
 	github.com/eapache/queue v1.1.0
 	github.com/fsnotify/fsnotify v1.4.7
 	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b
-	github.com/golang/protobuf v0.0.0-20181022004443-7be363195599
+	github.com/golang/protobuf v1.2.0
 	github.com/hashicorp/hcl v1.0.0
 	github.com/influxdata/influxdb v1.6.4
 	github.com/konsorten/go-windows-terminal-sequences v1.0.1
