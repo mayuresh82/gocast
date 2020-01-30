@@ -53,7 +53,7 @@ func NewConsulMon(addr string) (*ConsulMon, error) {
 
 func (c *ConsulMon) queryServices() ([]*App, error) {
 	var apps []*App
-	stale := ""
+	var stale string
 	if os.Getenv(allowStale) == "true" {
 		stale = "stale"
 	}
