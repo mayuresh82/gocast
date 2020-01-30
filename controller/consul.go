@@ -53,11 +53,11 @@ func NewConsulMon(addr string) (*ConsulMon, error) {
 
 func (c *ConsulMon) queryServices() ([]*App, error) {
 	var apps []*App
-	params := url.Values{}
+	stale := ""
 	if os.Getenv(allowStale) == "true" {
-		params.Add("stale")
+		stale = "stale"
 	}
-	addr := c.addr + fmt.Sprintf("%s/%s?%s", nodeURL, c.node, params.Encode())
+	addr := c.addr + fmt.Sprintf("%s/%s?%s", nodeURL, c.node, stale)
 	resp, err := c.client.Get(addr)
 	if err != nil {
 		return apps, err
