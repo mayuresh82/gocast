@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"github.com/golang/glog"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
+	"time"
 )
 
 const (
@@ -18,8 +20,9 @@ const (
 )
 
 type ConsulMon struct {
-	addr string
-	node string
+	addr   string
+	node   string
+	client *http.Client
 }
 
 type ConsulServiceData struct {
@@ -44,13 +47,13 @@ func NewConsulMon(addr string) (*ConsulMon, error) {
 	if node == "" {
 		return nil, fmt.Errorf("%s env variable not set", consulNodeEnv)
 	}
-	return &ConsulMon{addr: addr, node: node}, nil
+	return &ConsulMon{addr: addr, node: node, client: &http.Client{Timeout: 10 * time.Second}}, nil
 }
 
 func (c *ConsulMon) queryServices() ([]*App, error) {
 	var apps []*App
 	addr := c.addr + fmt.Sprintf("%s/%s", nodeURL, c.node)
-	resp, err := http.Get(addr)
+	resp, err := c.client.Get(addr)
 	if err != nil {
 		return apps, err
 	}
@@ -98,51 +101,46 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 	return apps, nil
 }
 
-// Returns a *Response to mimic http.Get with some minimal error handling.
-// https://golang.org/pkg/net/http/#Get for docs on Get.
-func getResp(addr) (resp *Response) {
-	resp, err := http.Get(addr)
-	if err != nil {
-		glog.V(2).Errorf("Error getting %s with %s", addr, err)
-	}
-	defer resp.Body.Close()
-	return resp
-}
-
 // healthCheckLocal queries a node's local consul agent to perform service healthchecks
 // This is the underlying api call: https://www.consul.io/api/agent/check.html
 func (c *ConsulMon) healthCheckLocal(service string) (bool, error) {
-	addr := c.addr + fmt.Sprintf("%s/%s", localHealthCheckurl, service)
-	resp, err = getResp(addr)
-
-	var data interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	params := url.Values{}
+	params.Add("filter", "enable_gocast in ServiceTags")
+	addr := c.addr + fmt.Sprintf("%s?%s", localHealthCheckurl, params.Encode())
+	resp, err := c.client.Get(addr)
+	if err != nil {
+		glog.V(2).Infof("Error getting %s with %s", addr, err)
 		return false, err
 	}
-
-	services := data.(map[string]interface{})
-	for _, serviceInfo := range services {
-		s := serviceInfo.(map[string]interface{})
-		serviceName := s["ServiceName"].(string)
-		if serviceName == service {
-			status := s["Status"].(string)
+	defer resp.Body.Close()
+	var services map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&services); err != nil {
+		return false, err
+	}
+	for _, sInfo := range services {
+		serviceInfo := sInfo.(map[string]interface{})
+		if serviceInfo["ServiceName"].(string) == service {
+			status := serviceInfo["Status"].(string)
 			if status == "passing" {
 				return true, nil
 			}
 			glog.V(2).Infof("Consul local healthcheck returned %s status", status)
 			return false, nil
 		}
-		node := serviceReport["Node"].(string)
-		return false, fmt.Errorf("No local healcheck info found for service %s on node %s in consul", service, node)
 	}
+	return false, fmt.Errorf("No local healcheck info found for service %s on node %s in consul", service, c.node)
 }
 
 // healthCheckRemote queries the consul cluster's healthcheck endpoint to perform service healthchecks
 // This is the underlying api call: https://www.consul.io/api/health.html
 func (c *ConsulMon) healthCheckRemote(service string) (bool, error) {
 	addr := c.addr + fmt.Sprintf("%s/%s", remoteHealthCheckurl, service)
-	resp, err = getResp(addr)
-
+	resp, err := c.client.Get(addr)
+	if err != nil {
+		glog.V(2).Infof("Error getting %s with %s", addr, err)
+		return false, err
+	}
+	defer resp.Body.Close()
 	var data []interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return false, err
@@ -165,7 +163,7 @@ func (c *ConsulMon) healthCheckRemote(service string) (bool, error) {
 // If the address contains "localhost", then it presumes that the local agent is to be used.
 func (c *ConsulMon) healthCheck(service string) (bool, error) {
 	usingLocalAgent := strings.Contains(c.addr, "localhost")
-	if (usingLocalAgent) {
+	if usingLocalAgent {
 		return c.healthCheckLocal(service)
 	}
 	return c.healthCheckRemote(service)
