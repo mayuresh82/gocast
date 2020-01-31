@@ -13,6 +13,7 @@ import (
 
 const (
 	consulNodeEnv        = "CONSUL_NODE"
+	allowStale           = "CONSUL_STALE"
 	matchTag             = "enable_gocast"
 	nodeURL              = "/catalog/node"
 	remoteHealthCheckurl = "/health/checks"
@@ -52,7 +53,11 @@ func NewConsulMon(addr string) (*ConsulMon, error) {
 
 func (c *ConsulMon) queryServices() ([]*App, error) {
 	var apps []*App
-	addr := c.addr + fmt.Sprintf("%s/%s", nodeURL, c.node)
+	var stale string
+	if os.Getenv(allowStale) == "true" {
+		stale = "stale"
+	}
+	addr := c.addr + fmt.Sprintf("%s/%s?%s", nodeURL, c.node, stale)
 	resp, err := c.client.Get(addr)
 	if err != nil {
 		return apps, err
