@@ -29,7 +29,7 @@ http://gocast-addr/register?name=<appName>&vip=<addr/mask>&monitor=port:tcp:5000
 ```
 Multiple monitors can be defined and the healthcheck succeeds only when all the monitors pass.
 
-2. Custom defined apps in config.yaml. See the example config.yaml for syntax examples ( not supported yet)
+2. Custom defined apps in config.yaml. See the example config.yaml for syntax examples
 
 3. Consul based auto-discovery (see below)
 
