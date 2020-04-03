@@ -53,7 +53,7 @@ If `gocast_monitor=consul` is specified, then GoCast uses the defined healthchec
 ## Docker support
 The docker image at mayuresh82/gocast can be used to run GoCast inside a container. In order for GoCast to manipulate the host network stack correctly, the container needs to run with NET_ADMIN capablity and host mode networking. For example:
 ```
-docker run -d --cap=NET_ADMIN --net=host mayuresh82/gocast --config=/path/to/config.yaml
+docker run -d --cap-add=NET_ADMIN --net=host -v /path/to/host-config:/path/to/container-config mayuresh82/gocast -config=/path/to/config.yaml -logtostderr
 ```
 
 **Caveats and workarounds**
