@@ -6,7 +6,7 @@ agent:
   # Time to flush out inactive apps
   cleanup_timer: 15m
   # Consul api addr for dynamic discovery
-  consul_addr: https://consul
+  consul_addr: https://consul/v1
   # interval to query consul for app discovery
   consul_query_interval: 5m
 
@@ -15,6 +15,7 @@ bgp:
   remote_as: 6789
   # override the peer IP to use instead of auto discovering
   peer_ip: 10.10.10.1
+  # at least 1 community must be specified
   communities:
     - asn:nnnn
     - asn:nnnn
