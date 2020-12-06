@@ -15,23 +15,30 @@ const (
 	consulNodeEnv        = "CONSUL_NODE"
 	allowStale           = "CONSUL_STALE"
 	matchTag             = "enable_gocast"
-	nodeURL              = "/catalog/node"
+	remoteNodeURL        = "/catalog/node"
+	localServicesURL     = "/agent/services"
 	remoteHealthCheckurl = "/health/checks"
 	localHealthCheckurl  = "/agent/checks"
 )
 
 type ConsulMon struct {
 	addr   string
-	node   string
 	client *http.Client
+	node   string
 }
 
+// spec provided by https://www.consul.io/api/agent/service.html
 type ConsulServiceData struct {
-	Services map[string]struct {
-		ID      string
-		Service string
-		Tags    []string
-	}
+	ID      string
+	Service string
+	Tags    []string
+}
+
+// spec provided by https://www.consul.io/api/catalog.html
+// Since the underlying structure of the json object returned via the catalog is
+// identical to the structure from the agent, we can use the ConsulServiceData representation
+type ConsulServicesData struct {
+	Services map[string]ConsulServiceData
 }
 
 func contains(inp []string, elem string) bool {
@@ -51,51 +58,103 @@ func NewConsulMon(addr string) (*ConsulMon, error) {
 	return &ConsulMon{addr: addr, node: node, client: &http.Client{Timeout: 10 * time.Second}}, nil
 }
 
-func (c *ConsulMon) queryServices() ([]*App, error) {
-	var apps []*App
-	var stale string
-	if os.Getenv(allowStale) == "true" {
-		stale = "stale"
+// generateApp generates an app from a given consul service data
+func (c *ConsulServiceData) generateApp() (*App, error) {
+	var (
+		vip      string
+		monitors []string
+		nats     []string
+	)
+
+	for _, tag := range c.Tags {
+		// try to find the required tags.
+		parts := strings.Split(tag, "=")
+		if len(parts) != 2 {
+			continue
+		}
+		switch parts[0] {
+		case "gocast_vip":
+			vip = parts[1]
+		case "gocast_monitor":
+			monitors = append(monitors, parts[1])
+		case "gocast_nat":
+			nats = append(nats, parts[1])
+		}
 	}
-	addr := c.addr + fmt.Sprintf("%s/%s?%s", nodeURL, c.node, stale)
+
+	if vip == "" {
+		// vip is mandatory, bail if it is absent
+		glog.Errorf("No vip Tag found in matched service :%s", service.Service)
+		return nil, err
+	}
+
+	app, err := NewApp(service.Service, vip, monitors, nats, "consul")
+	if err != nil {
+		glog.Errorf("Unable to generate consul app: %v", err)
+		return nil, err
+	}
+
+	return app, err
+}
+
+// localQueryServices writes the requests node service data from the local agent and uses it to generate an app
+func (c *ConsulMon) localQueryServices() ([]*App, error) {
+	addr := c.addr + fmt.Sprintf("%s/%s", localNodeURL, c.node)
 	resp, err := c.client.Get(addr)
 	if err != nil {
 		return apps, err
 	}
 	defer resp.Body.Close()
-	var consulData ConsulServiceData
+
+	var services map[string]ConsulServiceData
+	var apps []*App
+	if err := json.NewDecoder(resp.Body).Decode(&services); err != nil {
+		return apps, fmt.Errorf("Unable to decode local consul data %v", err)
+	}
+
+	for _, service in range services {
+        if !contains(service.Tags, matchTag) {
+			continue
+		}
+		app, err := service.generateApp()
+		if err != nil {
+			glog.Errorf("Unable to add consul app: %v", err)
+			continue
+		}
+		apps = append(apps, app)
+	}
+
+	return apps, nil
+}
+
+// remoteQueryServices writes the requests node service data from the catalog and uses it to generate an app
+func (c *ConsulMon) remoteQueryServices() ([]*App, error) {
+	// Retrieve data from remoteNodeURL
+	// stale queries consume less resources
+	var stale string
+	if os.Getenv(allowStale) == "true" {
+		stale = "stale"
+	}
+	addr := c.addr + fmt.Sprintf("%s/%s?%s", nodeURL, c.node, stale)
+
+	resp, err := c.client.Get(addr)
+	if err != nil {
+		return apps, err
+	}
+	defer resp.Body.Close()
+
+	// Parse data per ConsulServicesData specification
+	var apps []*App // Declare app array here to short circuit, or populate it within the following block
+	var consulData ConsulServicesData
 	if err := json.NewDecoder(resp.Body).Decode(&consulData); err != nil {
 		return apps, fmt.Errorf("Unable to decode consul data: %v", err)
 	}
+
 	for _, service := range consulData.Services {
 		if !contains(service.Tags, matchTag) {
 			continue
 		}
-		var (
-			vip      string
-			monitors []string
-			nats     []string
-		)
-		for _, tag := range service.Tags {
-			// try to find the requires tags. Only vip is mandatory
-			parts := strings.Split(tag, "=")
-			if len(parts) != 2 {
-				continue
-			}
-			switch parts[0] {
-			case "gocast_vip":
-				vip = parts[1]
-			case "gocast_monitor":
-				monitors = append(monitors, parts[1])
-			case "gocast_nat":
-				nats = append(nats, parts[1])
-			}
-		}
-		if vip == "" {
-			glog.Errorf("No vip Tag found in matched service :%s", service.Service)
-			continue
-		}
-		app, err := NewApp(service.Service, vip, monitors, nats, "consul")
+		app, err := service.generateApp()
 		if err != nil {
 			glog.Errorf("Unable to add consul app: %v", err)
 			continue
@@ -106,11 +165,21 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 	return apps, nil
 }
 
+// queryServices queries the services from a local agent if the address is localhost.
+// If using another address, it will presume it's a remote consul node, and call the node catalog directly
+func (c *ConsulMon) queryServices() ([]*App, error) {
+	usingLocalAgent := strings.Contains(c.addr, "localhost")
+	if usingLocalAgent {
+		return c.localQueryServices()
+	}
+	c.remoteQueryServices()
+}
+
 // healthCheckLocal queries a node's local consul agent to perform service healthchecks
 // This is the underlying api call: https://www.consul.io/api/agent/check.html
 func (c *ConsulMon) healthCheckLocal(service string) (bool, error) {
 	params := url.Values{}
-	params.Add("filter", "enable_gocast in ServiceTags")
+	params.Add("filter", fmt.Sprintf("%s in ServiceTags", matchTag))
 	addr := c.addr + fmt.Sprintf("%s?%s", localHealthCheckurl, params.Encode())
 	resp, err := c.client.Get(addr)
 	if err != nil {
