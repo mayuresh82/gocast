@@ -54,17 +54,10 @@ func TestMain(m *testing.M) {
 	case "test_add_fail":
 		os.Exit(1)
 	default:
-		fmt.Println("success")
+		break
 	}
 	if os.Getenv("test_name") != "" {
 		return
 	}
-	var err error
-	listener, err = NewBgpListener(22222)
-	if err != nil {
-		panic(err)
-	}
-	code := m.Run()
-	listener.Shutdown()
-	os.Exit(code)
+	os.Exit(m.Run())
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"testing"
 
 	"github.com/golang/protobuf/ptypes"
@@ -17,8 +18,6 @@ type BgpListener struct {
 	s          *gobgp.BgpServer
 	recvdPaths chan string
 }
-
-var listener *BgpListener
 
 // NewBgpListener starts a local BGP server for testing purposes
 func NewBgpListener(localAS int) (*BgpListener, error) {
@@ -71,6 +70,14 @@ func (l *BgpListener) Shutdown() error {
 // if the test timeouts are very small. It also needs to be run as
 // root (sudo)
 func TestBgpNew(t *testing.T) {
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping testing in CI environment")
+	}
+	listener, err := NewBgpListener(22222)
+	if err != nil {
+		panic(err)
+	}
+	defer listener.Shutdown()
 	a := assert.New(t)
 	c := config.BgpConfig{
 		LocalAS:     11111,
