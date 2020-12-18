@@ -69,6 +69,7 @@ func (l *BgpListener) Shutdown() error {
 // listener. It needs a few seconds to pass and *may* time out
 // if the test timeouts are very small. It also needs to be run as
 // root (sudo)
+// Disabling this test in CI currently due to https://github.com/osrg/gobgp/issues/2366
 func TestBgpNew(t *testing.T) {
 	if os.Getenv("CI") != "" {
 		t.Skip("Skipping testing in CI environment")
