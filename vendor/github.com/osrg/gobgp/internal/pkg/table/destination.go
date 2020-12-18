@@ -74,38 +74,6 @@ func (r *BestPathReason) String() string {
 	return BestPathReasonStringMap[*r]
 }
 
-func IpToRadixkey(b []byte, max uint8) string {
-	var buffer bytes.Buffer
-	for i := 0; i < len(b) && i < int(max); i++ {
-		fmt.Fprintf(&buffer, "%08b", b[i])
-	}
-	return buffer.String()[:max]
-}
-
-func CidrToRadixkey(cidr string) string {
-	_, n, _ := net.ParseCIDR(cidr)
-	ones, _ := n.Mask.Size()
-	return IpToRadixkey(n.IP, uint8(ones))
-}
-
-func AddrToRadixkey(addr bgp.AddrPrefixInterface) string {
-	var (
-		ip   net.IP
-		size uint8
-	)
-	switch T := addr.(type) {
-	case *bgp.IPAddrPrefix:
-		mask := net.CIDRMask(int(T.Length), net.IPv4len*8)
-		ip, size = T.Prefix.Mask(mask).To4(), uint8(T.Length)
-	case *bgp.IPv6AddrPrefix:
-		mask := net.CIDRMask(int(T.Length), net.IPv6len*8)
-		ip, size = T.Prefix.Mask(mask).To16(), uint8(T.Length)
-	default:
-		return CidrToRadixkey(addr.String())
-	}
-	return IpToRadixkey(ip, size)
-}
-
 type PeerInfo struct {
 	AS                      uint32
 	ID                      net.IP
@@ -265,7 +233,7 @@ func (dest *Destination) Calculate(newPath *Path) *Update {
 
 	if newPath.IsWithdraw {
 		p := dest.explicitWithdraw(newPath)
-		if p != nil {
+		if p != nil && newPath.IsDropped() {
 			if id := p.GetNlri().PathLocalIdentifier(); id != 0 {
 				dest.localIdMap.Unflag(uint(id))
 			}
@@ -405,17 +373,19 @@ func (dest *Destination) computeKnownBestPath() (*Path, BestPathReason, error) {
 		}
 		return dest.knownPathList[0], BPR_ONLY_PATH, nil
 	}
-	dest.sort()
+	reason := dest.sort()
 	newBest := dest.knownPathList[0]
 	// If the first path has the invalidated next-hop, which evaluated by IGP,
 	// returns no path with the reason of the next-hop reachability.
 	if dest.knownPathList[0].IsNexthopInvalid {
 		return nil, BPR_REACHABLE_NEXT_HOP, nil
 	}
-	return newBest, newBest.reason, nil
+	return newBest, reason, nil
 }
 
-func (dst *Destination) sort() {
+func (dst *Destination) sort() BestPathReason {
+	reason := BPR_UNKNOWN
+
 	sort.SliceStable(dst.knownPathList, func(i, j int) bool {
 		//Compares given paths and returns best path.
 		//
@@ -451,7 +421,6 @@ func (dst *Destination) sort() {
 		path2 := dst.knownPathList[j]
 
 		var better *Path
-		reason := BPR_UNKNOWN
 
 		// draft-uttaro-idr-bgp-persistence-02
 		if better == nil {
@@ -501,7 +470,7 @@ func (dst *Destination) sort() {
 			reason = BPR_OLDER
 		}
 		if better == nil {
-			var e error = nil
+			var e error
 			better, e = compareByRouterID(path1, path2)
 			if e != nil {
 				log.WithFields(log.Fields{
@@ -515,11 +484,9 @@ func (dst *Destination) sort() {
 			reason = BPR_UNKNOWN
 			better = path1
 		}
-
-		better.reason = reason
-
 		return better == path1
 	})
+	return reason
 }
 
 type Update struct {
@@ -933,7 +900,7 @@ func compareByRouterID(path1, path2 *Path) (*Path, error) {
 	}
 
 	if !SelectionOptions.ExternalCompareRouterId && path1.IsIBGP() != path2.IsIBGP() {
-		return nil, fmt.Errorf("This method does not support comparing ebgp with ibgp path")
+		return nil, fmt.Errorf("this method does not support comparing ebgp with ibgp path")
 	}
 
 	// At least one path is not coming from NC, so we get local bgp id.

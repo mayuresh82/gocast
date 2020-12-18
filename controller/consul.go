@@ -3,12 +3,13 @@ package controller
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/golang/glog"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/golang/glog"
 )
 
 const (
@@ -20,10 +21,18 @@ const (
 	localHealthCheckurl  = "/agent/checks"
 )
 
+type Clienter interface {
+	Get(url string) (*http.Response, error)
+}
+
+type Client struct {
+	*http.Client
+}
+
 type ConsulMon struct {
 	addr   string
 	node   string
-	client *http.Client
+	client Clienter
 }
 
 type ConsulServiceData struct {
@@ -167,7 +176,7 @@ func (c *ConsulMon) healthCheckRemote(service string) (bool, error) {
 // healthCheck determines if we should use the local agent
 // If the address contains "localhost", then it presumes that the local agent is to be used.
 func (c *ConsulMon) healthCheck(service string) (bool, error) {
-	usingLocalAgent := strings.Contains(c.addr, "localhost")
+	usingLocalAgent := strings.Contains(c.addr, "localhost") || strings.Contains(c.addr, "127.0.0.1")
 	if usingLocalAgent {
 		return c.healthCheckLocal(service)
 	}

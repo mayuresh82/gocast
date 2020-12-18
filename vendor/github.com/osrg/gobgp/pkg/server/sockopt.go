@@ -17,74 +17,46 @@
 package server
 
 import (
-	"fmt"
 	"net"
+	"syscall"
 
 	log "github.com/sirupsen/logrus"
 )
 
-func SetTcpMD5SigSockopt(l *net.TCPListener, address string, key string) error {
+func setTCPMD5SigSockopt(l *net.TCPListener, address string, key string) error {
 	return setTcpMD5SigSockopt(l, address, key)
 }
 
-func SetListenTcpTTLSockopt(l *net.TCPListener, ttl int) error {
+func setListenTCPTTLSockopt(l *net.TCPListener, ttl int) error {
 	return setListenTcpTTLSockopt(l, ttl)
 }
 
-func SetTcpTTLSockopt(conn *net.TCPConn, ttl int) error {
+func setTCPTTLSockopt(conn *net.TCPConn, ttl int) error {
 	return setTcpTTLSockopt(conn, ttl)
 }
 
-func SetTcpMinTTLSockopt(conn *net.TCPConn, ttl int) error {
+func setTCPMinTTLSockopt(conn *net.TCPConn, ttl int) error {
 	return setTcpMinTTLSockopt(conn, ttl)
 }
 
-type TCPDialer struct {
-	net.Dialer
-
-	// MD5 authentication password.
-	AuthPassword string
-
-	// The TTL value to set outgoing connection.
-	Ttl uint8
-
-	// The minimum TTL value for incoming packets.
-	TtlMin uint8
-}
-
-func (d *TCPDialer) DialTCP(addr string, port int) (*net.TCPConn, error) {
-	if d.AuthPassword != "" {
+func dialerControl(network, address string, c syscall.RawConn, ttl, ttlMin uint8, password string, bindInterface string) error {
+	if password != "" {
 		log.WithFields(log.Fields{
 			"Topic": "Peer",
-			"Key":   addr,
+			"Key":   address,
 		}).Warn("setting md5 for active connection is not supported")
 	}
-	if d.Ttl != 0 {
+	if ttl != 0 {
 		log.WithFields(log.Fields{
 			"Topic": "Peer",
-			"Key":   addr,
+			"Key":   address,
 		}).Warn("setting ttl for active connection is not supported")
 	}
-	if d.TtlMin != 0 {
+	if ttlMin != 0 {
 		log.WithFields(log.Fields{
 			"Topic": "Peer",
-			"Key":   addr,
+			"Key":   address,
 		}).Warn("setting min ttl for active connection is not supported")
 	}
-
-	raddr, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(addr, fmt.Sprintf("%d", port)))
-	if err != nil {
-		return nil, fmt.Errorf("invalid remote address: %s", err)
-	}
-	laddr, err := net.ResolveTCPAddr("tcp", d.LocalAddr.String())
-	if err != nil {
-		return nil, fmt.Errorf("invalid local address: %s", err)
-	}
-
-	dialer := net.Dialer{LocalAddr: laddr, Timeout: d.Timeout}
-	conn, err := dialer.Dial("tcp", raddr.String())
-	if err != nil {
-		return nil, err
-	}
-	return conn.(*net.TCPConn), nil
+	return nil
 }

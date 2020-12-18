@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strconv"
 
+	"github.com/osrg/gobgp/internal/pkg/zebra"
 	"github.com/osrg/gobgp/pkg/packet/bgp"
 	"github.com/osrg/gobgp/pkg/packet/bmp"
 	"github.com/osrg/gobgp/pkg/packet/rtr"
@@ -197,11 +198,15 @@ func setDefaultNeighborConfigValuesWithViper(v *viper.Viper, n *Neighbor, g *Glo
 			}
 			n.AfiSafis[i].MpGracefulRestart.State.Enabled = n.AfiSafis[i].MpGracefulRestart.Config.Enabled
 			if !vv.IsSet("afi-safi.add-paths.config.receive") {
-				n.AfiSafis[i].AddPaths.Config.Receive = n.AddPaths.Config.Receive
+				if n.AddPaths.Config.Receive {
+					n.AfiSafis[i].AddPaths.Config.Receive = n.AddPaths.Config.Receive
+				}
 			}
 			n.AfiSafis[i].AddPaths.State.Receive = n.AfiSafis[i].AddPaths.Config.Receive
 			if !vv.IsSet("afi-safi.add-paths.config.send-max") {
-				n.AfiSafis[i].AddPaths.Config.SendMax = n.AddPaths.Config.SendMax
+				if n.AddPaths.Config.SendMax != 0 {
+					n.AfiSafis[i].AddPaths.Config.SendMax = n.AddPaths.Config.SendMax
+				}
 			}
 			n.AfiSafis[i].AddPaths.State.SendMax = n.AfiSafis[i].AddPaths.Config.SendMax
 		}
@@ -344,7 +349,14 @@ func setDefaultConfigValuesWithViper(v *viper.Viper, b *BgpConfigSet) error {
 		return err
 	}
 
+	bmpSysPrefix := "Gobgp-R"
 	for idx, server := range b.BmpServers {
+		if server.Config.SysName == "" {
+			server.Config.SysName = bmpSysPrefix + strconv.Itoa(idx)
+		}
+		if server.Config.SysDescr == "" {
+			server.Config.SysDescr = "Gobgp Version: master"
+		}
 		if server.Config.Port == 0 {
 			server.Config.Port = bmp.BMP_DEFAULT_PORT
 		}
@@ -396,16 +408,21 @@ func setDefaultConfigValuesWithViper(v *viper.Viper, b *BgpConfigSet) error {
 	if b.Zebra.Config.Url == "" {
 		b.Zebra.Config.Url = "unix:/var/run/quagga/zserv.api"
 	}
-	if b.Zebra.Config.Version < 2 {
-		b.Zebra.Config.Version = 2
-	} else if b.Zebra.Config.Version > 5 {
-		b.Zebra.Config.Version = 5
+	if b.Zebra.Config.Version < zebra.MinZapiVer {
+		b.Zebra.Config.Version = zebra.MinZapiVer
+	} else if b.Zebra.Config.Version > zebra.MaxZapiVer {
+		b.Zebra.Config.Version = zebra.MaxZapiVer
 	}
+
 	if !v.IsSet("zebra.config.nexthop-trigger-enable") && !b.Zebra.Config.NexthopTriggerEnable && b.Zebra.Config.Version > 2 {
 		b.Zebra.Config.NexthopTriggerEnable = true
 	}
 	if b.Zebra.Config.NexthopTriggerDelay == 0 {
 		b.Zebra.Config.NexthopTriggerDelay = 5
+	}
+
+	if !zebra.IsAllowableSoftwareName(b.Zebra.Config.Version, b.Zebra.Config.SoftwareName) {
+		b.Zebra.Config.SoftwareName = ""
 	}
 
 	list, err := extractArray(v.Get("neighbors"))
@@ -495,7 +512,7 @@ func OverwriteNeighborConfigWithPeerGroup(c *Neighbor, pg *PeerGroup) error {
 	overwriteConfig(&c.TtlSecurity.Config, &pg.TtlSecurity.Config, "neighbor.ttl-security.config", v)
 
 	if !v.IsSet("neighbor.afi-safis") {
-		c.AfiSafis = append(c.AfiSafis, pg.AfiSafis...)
+		c.AfiSafis = append([]AfiSafi{}, pg.AfiSafis...)
 	}
 
 	return nil

@@ -166,11 +166,12 @@ func (manager *TableManager) DeleteVrf(name string) ([]*Path, error) {
 		msgs = append(msgs, t.deletePathsByVrf(vrf)...)
 	}
 	log.WithFields(log.Fields{
-		"Topic":    "Vrf",
-		"Key":      vrf.Name,
-		"Rd":       vrf.Rd,
-		"ImportRt": vrf.ImportRt,
-		"ExportRt": vrf.ExportRt,
+		"Topic":     "Vrf",
+		"Key":       vrf.Name,
+		"Rd":        vrf.Rd,
+		"ImportRt":  vrf.ImportRt,
+		"ExportRt":  vrf.ExportRt,
+		"MplsLabel": vrf.MplsLabel,
 	}).Debugf("delete vrf")
 	delete(manager.Vrfs, name)
 	rtcTable := manager.Tables[bgp.RF_RTC_UC]
@@ -181,27 +182,12 @@ func (manager *TableManager) DeleteVrf(name string) ([]*Path, error) {
 func (tm *TableManager) update(newPath *Path) *Update {
 	t := tm.Tables[newPath.GetRouteFamily()]
 	t.validatePath(newPath)
-	dst := t.getOrCreateDest(newPath.GetNlri())
+	dst := t.getOrCreateDest(newPath.GetNlri(), 64)
 	u := dst.Calculate(newPath)
 	if len(dst.knownPathList) == 0 {
 		t.deleteDest(dst)
 	}
 	return u
-}
-
-func (manager *TableManager) GetPathListByPeer(info *PeerInfo, rf bgp.RouteFamily) []*Path {
-	if t, ok := manager.Tables[rf]; ok {
-		pathList := make([]*Path, 0, len(t.destinations))
-		for _, dst := range t.destinations {
-			for _, p := range dst.knownPathList {
-				if p.GetSource().Equal(info) {
-					pathList = append(pathList, p)
-				}
-			}
-		}
-		return pathList
-	}
-	return nil
 }
 
 func (manager *TableManager) Update(newPath *Path) []*Update {
@@ -232,6 +218,12 @@ func (manager *TableManager) Update(newPath *Path) []*Update {
 // different Ethernet segment identifier and a higher sequence number
 // than that which it had previously advertised withdraws its MAC/IP
 // Advertisement route.
+// ......
+// If the PE is the originator of the MAC route and it receives the same
+// MAC address with the same sequence number that it generated, it will
+// compare its own IP address with the IP address of the remote PE and
+// will select the lowest IP.  If its own route is not the best one, it
+// will withdraw the route.
 func (manager *TableManager) handleMacMobility(path *Path) []*Path {
 	pathList := make([]*Path, 0)
 	nlri := path.GetNlri().(*bgp.EVPNNLRI)
@@ -242,7 +234,7 @@ func (manager *TableManager) handleMacMobility(path *Path) []*Path {
 		if !path2.IsLocal() || path2.GetNlri().(*bgp.EVPNNLRI).RouteType != bgp.EVPN_ROUTE_TYPE_MAC_IP_ADVERTISEMENT {
 			continue
 		}
-		f := func(p *Path) (bgp.EthernetSegmentIdentifier, net.HardwareAddr, int) {
+		f := func(p *Path) (bgp.EthernetSegmentIdentifier, uint32, net.HardwareAddr, int, net.IP) {
 			nlri := p.GetNlri().(*bgp.EVPNNLRI)
 			d := nlri.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute)
 			ecs := p.GetExtCommunities()
@@ -253,12 +245,14 @@ func (manager *TableManager) handleMacMobility(path *Path) []*Path {
 					break
 				}
 			}
-			return d.ESI, d.MacAddress, seq
+			return d.ESI, d.ETag, d.MacAddress, seq, p.info.source.Address
 		}
-		e1, m1, s1 := f(path)
-		e2, m2, s2 := f(path2)
-		if bytes.Equal(m1, m2) && !bytes.Equal(e1.Value, e2.Value) && s1 > s2 {
-			pathList = append(pathList, path2.Clone(true))
+		e1, et1, m1, s1, i1 := f(path)
+		e2, et2, m2, s2, i2 := f(path2)
+		if et1 == et2 && bytes.Equal(m1, m2) && !bytes.Equal(e1.Value, e2.Value) {
+			if s1 > s2 || s1 == s2 && bytes.Compare(i1, i2) < 0 {
+				pathList = append(pathList, path2.Clone(true))
+			}
 		}
 	}
 	return pathList
@@ -359,12 +353,4 @@ func (manager *TableManager) GetDestination(path *Path) *Destination {
 		return nil
 	}
 	return t.GetDestination(path.GetNlri())
-}
-
-func (manager *TableManager) TableInfo(id string, as uint32, family bgp.RouteFamily) (*TableInfo, error) {
-	t, ok := manager.Tables[family]
-	if !ok {
-		return nil, fmt.Errorf("address family %s is not configured", family)
-	}
-	return t.Info(id, as), nil
 }

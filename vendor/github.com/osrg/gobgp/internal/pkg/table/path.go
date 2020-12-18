@@ -89,7 +89,6 @@ type originInfo struct {
 	nlri               bgp.AddrPrefixInterface
 	source             *PeerInfo
 	timestamp          int64
-	validation         *Validation
 	noImplicitWithdraw bool
 	isFromExternal     bool
 	eor                bool
@@ -138,15 +137,21 @@ type Path struct {
 	pathAttrs []bgp.PathAttributeInterface
 	dels      []bgp.BGPAttrType
 	attrsHash uint32
-	aslooped  bool
-	reason    BestPathReason
+	rejected  bool
+	// doesn't exist in the adj
+	dropped bool
 
 	// For BGP Nexthop Tracking, this field shows if nexthop is invalidated by IGP.
 	IsNexthopInvalid bool
 	IsWithdraw       bool
 }
 
+var localSource = &PeerInfo{}
+
 func NewPath(source *PeerInfo, nlri bgp.AddrPrefixInterface, isWithdraw bool, pattrs []bgp.PathAttributeInterface, timestamp time.Time, noImplicitWithdraw bool) *Path {
+	if source == nil {
+		source = localSource
+	}
 	if !isWithdraw && pattrs == nil {
 		log.WithFields(log.Fields{
 			"Topic": "Table",
@@ -323,7 +328,8 @@ func (path *Path) IsLocal() bool {
 }
 
 func (path *Path) IsIBGP() bool {
-	return path.GetSource().AS == path.GetSource().LocalAS
+	as := path.GetSource().AS
+	return (as == path.GetSource().LocalAS) && as != 0
 }
 
 // create new PathAttributes
@@ -352,22 +358,6 @@ func (path *Path) NoImplicitWithdraw() bool {
 	return path.OriginInfo().noImplicitWithdraw
 }
 
-func (path *Path) Validation() *Validation {
-	return path.OriginInfo().validation
-}
-
-func (path *Path) ValidationStatus() config.RpkiValidationResultType {
-	if v := path.OriginInfo().validation; v != nil {
-		return v.Status
-	} else {
-		return config.RPKI_VALIDATION_RESULT_TYPE_NONE
-	}
-}
-
-func (path *Path) SetValidation(v *Validation) {
-	path.OriginInfo().validation = v
-}
-
 func (path *Path) IsFromExternal() bool {
 	return path.OriginInfo().isFromExternal
 }
@@ -380,9 +370,6 @@ func (path *Path) GetRouteFamily() bgp.RouteFamily {
 	return bgp.AfiSafiToRouteFamily(path.OriginInfo().nlri.AFI(), path.OriginInfo().nlri.SAFI())
 }
 
-func (path *Path) SetSource(source *PeerInfo) {
-	path.OriginInfo().source = source
-}
 func (path *Path) GetSource() *PeerInfo {
 	return path.OriginInfo().source
 }
@@ -395,12 +382,29 @@ func (path *Path) IsStale() bool {
 	return path.OriginInfo().stale
 }
 
-func (path *Path) IsAsLooped() bool {
-	return path.aslooped
+func (path *Path) IsRejected() bool {
+	return path.rejected
 }
 
-func (path *Path) SetAsLooped(y bool) {
-	path.aslooped = y
+func (path *Path) SetRejected(y bool) {
+	path.rejected = y
+}
+
+func (path *Path) IsDropped() bool {
+	return path.dropped
+}
+
+func (path *Path) SetDropped(y bool) {
+	path.dropped = y
+}
+
+func (path *Path) HasNoLLGR() bool {
+	for _, c := range path.GetCommunities() {
+		if c == uint32(bgp.COMMUNITY_NO_LLGR) {
+			return true
+		}
+	}
+	return false
 }
 
 func (path *Path) IsLLGRStale() bool {
@@ -897,6 +901,12 @@ func (path *Path) GetLargeCommunities() []*bgp.LargeCommunity {
 }
 
 func (path *Path) SetLargeCommunities(cs []*bgp.LargeCommunity, doReplace bool) {
+	if len(cs) == 0 && doReplace {
+		// clear large communities
+		path.delPathAttr(bgp.BGP_ATTR_TYPE_LARGE_COMMUNITY)
+		return
+	}
+
 	a := path.getPathAttr(bgp.BGP_ATTR_TYPE_LARGE_COMMUNITY)
 	if a == nil || doReplace {
 		path.setPathAttr(bgp.NewPathAttributeLargeCommunities(cs))
@@ -1016,7 +1026,6 @@ func (path *Path) MarshalJSON() ([]byte, error) {
 		PathAttrs:  path.GetPathAttrs(),
 		Age:        path.GetTimestamp().Unix(),
 		Withdrawal: path.IsWithdraw,
-		Validation: string(path.ValidationStatus()),
 		SourceID:   path.GetSource().ID,
 		NeighborIP: path.GetSource().Address,
 		Stale:      path.IsStale(),
@@ -1066,12 +1075,22 @@ func (v *Vrf) ToGlobalPath(path *Path) error {
 	case bgp.RF_IPv4_UC:
 		n := nlri.(*bgp.IPAddrPrefix)
 		pathIdentifier := path.GetNlri().PathIdentifier()
-		path.OriginInfo().nlri = bgp.NewLabeledVPNIPAddrPrefix(n.Length, n.Prefix.String(), *bgp.NewMPLSLabelStack(0), v.Rd)
+		path.OriginInfo().nlri = bgp.NewLabeledVPNIPAddrPrefix(n.Length, n.Prefix.String(), *bgp.NewMPLSLabelStack(v.MplsLabel), v.Rd)
+		path.GetNlri().SetPathIdentifier(pathIdentifier)
+	case bgp.RF_FS_IPv4_UC:
+		n := nlri.(*bgp.FlowSpecIPv4Unicast)
+		pathIdentifier := path.GetNlri().PathIdentifier()
+		path.OriginInfo().nlri = bgp.NewFlowSpecIPv4VPN(v.Rd, n.FlowSpecNLRI.Value)
 		path.GetNlri().SetPathIdentifier(pathIdentifier)
 	case bgp.RF_IPv6_UC:
 		n := nlri.(*bgp.IPv6AddrPrefix)
 		pathIdentifier := path.GetNlri().PathIdentifier()
-		path.OriginInfo().nlri = bgp.NewLabeledVPNIPv6AddrPrefix(n.Length, n.Prefix.String(), *bgp.NewMPLSLabelStack(0), v.Rd)
+		path.OriginInfo().nlri = bgp.NewLabeledVPNIPv6AddrPrefix(n.Length, n.Prefix.String(), *bgp.NewMPLSLabelStack(v.MplsLabel), v.Rd)
+		path.GetNlri().SetPathIdentifier(pathIdentifier)
+	case bgp.RF_FS_IPv6_UC:
+		n := nlri.(*bgp.FlowSpecIPv6Unicast)
+		pathIdentifier := path.GetNlri().PathIdentifier()
+		path.OriginInfo().nlri = bgp.NewFlowSpecIPv6VPN(v.Rd, n.FlowSpecNLRI.Value)
 		path.GetNlri().SetPathIdentifier(pathIdentifier)
 	case bgp.RF_EVPN:
 		n := nlri.(*bgp.EVPNNLRI)
@@ -1095,11 +1114,11 @@ func (p *Path) ToGlobal(vrf *Vrf) *Path {
 	switch rf := p.GetRouteFamily(); rf {
 	case bgp.RF_IPv4_UC:
 		n := nlri.(*bgp.IPAddrPrefix)
-		nlri = bgp.NewLabeledVPNIPAddrPrefix(n.Length, n.Prefix.String(), *bgp.NewMPLSLabelStack(0), vrf.Rd)
+		nlri = bgp.NewLabeledVPNIPAddrPrefix(n.Length, n.Prefix.String(), *bgp.NewMPLSLabelStack(vrf.MplsLabel), vrf.Rd)
 		nlri.SetPathIdentifier(pathId)
 	case bgp.RF_IPv6_UC:
 		n := nlri.(*bgp.IPv6AddrPrefix)
-		nlri = bgp.NewLabeledVPNIPv6AddrPrefix(n.Length, n.Prefix.String(), *bgp.NewMPLSLabelStack(0), vrf.Rd)
+		nlri = bgp.NewLabeledVPNIPv6AddrPrefix(n.Length, n.Prefix.String(), *bgp.NewMPLSLabelStack(vrf.MplsLabel), vrf.Rd)
 		nlri.SetPathIdentifier(pathId)
 	case bgp.RF_EVPN:
 		n := nlri.(*bgp.EVPNNLRI)
@@ -1134,7 +1153,6 @@ func (p *Path) ToGlobal(vrf *Vrf) *Path {
 	path.SetExtCommunities(vrf.ExportRt, false)
 	path.delPathAttr(bgp.BGP_ATTR_TYPE_NEXT_HOP)
 	path.setPathAttr(bgp.NewPathAttributeMpReachNLRI(nh.String(), []bgp.AddrPrefixInterface{nlri}))
-	path.IsNexthopInvalid = p.IsNexthopInvalid
 	return path
 }
 
@@ -1149,17 +1167,39 @@ func (p *Path) ToLocal() *Path {
 		ones, _ := c.Mask.Size()
 		nlri = bgp.NewIPAddrPrefix(uint8(ones), c.IP.String())
 		nlri.SetPathLocalIdentifier(pathId)
+	case bgp.RF_FS_IPv4_VPN:
+		n := nlri.(*bgp.FlowSpecIPv4VPN)
+		nlri = bgp.NewFlowSpecIPv4Unicast(n.FlowSpecNLRI.Value)
+		nlri.SetPathLocalIdentifier(pathId)
 	case bgp.RF_IPv6_VPN:
 		n := nlri.(*bgp.LabeledVPNIPv6AddrPrefix)
 		_, c, _ := net.ParseCIDR(n.IPPrefix())
 		ones, _ := c.Mask.Size()
 		nlri = bgp.NewIPv6AddrPrefix(uint8(ones), c.IP.String())
 		nlri.SetPathLocalIdentifier(pathId)
+	case bgp.RF_FS_IPv6_VPN:
+		n := nlri.(*bgp.FlowSpecIPv6VPN)
+		nlri = bgp.NewFlowSpecIPv6Unicast(n.FlowSpecNLRI.Value)
+		nlri.SetPathLocalIdentifier(pathId)
 	default:
 		return p
 	}
 	path := NewPath(p.OriginInfo().source, nlri, p.IsWithdraw, p.GetPathAttrs(), p.GetTimestamp(), false)
-	path.delPathAttr(bgp.BGP_ATTR_TYPE_EXTENDED_COMMUNITIES)
+	switch f {
+	case bgp.RF_IPv4_VPN, bgp.RF_IPv6_VPN:
+		path.delPathAttr(bgp.BGP_ATTR_TYPE_EXTENDED_COMMUNITIES)
+	case bgp.RF_FS_IPv4_VPN, bgp.RF_FS_IPv6_VPN:
+		extcomms := path.GetExtCommunities()
+		newExtComms := make([]bgp.ExtendedCommunityInterface, 0, len(extcomms))
+		for _, extComm := range extcomms {
+			_, subType := extComm.GetTypes()
+			if subType == bgp.EC_SUBTYPE_ROUTE_TARGET {
+				continue
+			}
+			newExtComms = append(newExtComms, extComm)
+		}
+		path.SetExtCommunities(newExtComms, true)
+	}
 
 	if f == bgp.RF_IPv4_VPN {
 		nh := path.GetNexthop()
@@ -1176,4 +1216,30 @@ func (p *Path) SetHash(v uint32) {
 
 func (p *Path) GetHash() uint32 {
 	return p.attrsHash
+}
+
+func nlriToIPNet(nlri bgp.AddrPrefixInterface) *net.IPNet {
+	switch T := nlri.(type) {
+	case *bgp.IPAddrPrefix:
+		return &net.IPNet{
+			IP:   net.IP(T.Prefix.To4()),
+			Mask: net.CIDRMask(int(T.Length), 32),
+		}
+	case *bgp.IPv6AddrPrefix:
+		return &net.IPNet{
+			IP:   net.IP(T.Prefix.To16()),
+			Mask: net.CIDRMask(int(T.Length), 128),
+		}
+	case *bgp.LabeledIPAddrPrefix:
+		return &net.IPNet{
+			IP:   net.IP(T.Prefix.To4()),
+			Mask: net.CIDRMask(int(T.Length), 32),
+		}
+	case *bgp.LabeledIPv6AddrPrefix:
+		return &net.IPNet{
+			IP:   net.IP(T.Prefix.To4()),
+			Mask: net.CIDRMask(int(T.Length), 128),
+		}
+	}
+	return nil
 }

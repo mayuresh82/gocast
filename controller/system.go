@@ -7,9 +7,21 @@ import (
 	"strings"
 )
 
+var execCmd = "bash"
+
+func getCmdList(mainCmd string) []string {
+	cmdList := []string{}
+	if execCmd == "bash" {
+		cmdList = append(cmdList, "-c")
+	}
+	cmdList = append(cmdList, mainCmd)
+	return cmdList
+}
+
 func gateway() (net.IP, error) {
 	cmd := `ip route | grep "^default" | cut -d" " -f3`
-	out, err := exec.Command("bash", "-c", cmd).Output()
+	cmdList := getCmdList(cmd)
+	out, err := exec.Command(execCmd, cmdList...).Output()
 	if err != nil {
 		return nil, fmt.Errorf("Failed to execute command: %s", cmd)
 	}
@@ -18,7 +30,8 @@ func gateway() (net.IP, error) {
 
 func via(dest net.IP) (net.IP, error) {
 	cmd := fmt.Sprintf(`ip route get %s | grep via | cut -d" " -f3`, dest.String())
-	out, err := exec.Command("bash", "-c", cmd).Output()
+	cmdList := getCmdList(cmd)
+	out, err := exec.Command(execCmd, cmdList...).Output()
 	if err != nil {
 		return nil, fmt.Errorf("Failed to execute command: %s", cmd)
 	}
@@ -54,7 +67,8 @@ func addLoopback(name string, addr *net.IPNet) error {
 		label = label[:15]
 	}
 	cmd := fmt.Sprintf("ip address add %s/%d dev lo label %s", addr.IP.String(), prefixLen, label)
-	_, err := exec.Command("bash", "-c", cmd).Output()
+	cmdList := getCmdList(cmd)
+	_, err := exec.Command(execCmd, cmdList...).Output()
 	if err != nil {
 		return fmt.Errorf("Failed to Add loopback command: %s: %v", cmd, err)
 	}
@@ -64,7 +78,8 @@ func addLoopback(name string, addr *net.IPNet) error {
 func deleteLoopback(addr *net.IPNet) error {
 	prefixLen, _ := addr.Mask.Size()
 	cmd := fmt.Sprintf("ip address delete %s/%d dev lo", addr.IP.String(), prefixLen)
-	_, err := exec.Command("bash", "-c", cmd).Output()
+	cmdList := getCmdList(cmd)
+	_, err := exec.Command(execCmd, cmdList...).Output()
 	if err != nil {
 		return fmt.Errorf("Failed to delete loopback command: %s: %v", cmd, err)
 	}
@@ -76,7 +91,8 @@ func natRule(op string, vip, localAddr net.IP, protocol, port string) error {
 		"iptables -t nat -%s PREROUTING -p %s -d %s --dport %s -j DNAT --to-destination %s:%s",
 		op, protocol, vip.String(), port, localAddr.String(), port,
 	)
-	_, err := exec.Command("bash", "-c", cmd).Output()
+	cmdList := getCmdList(cmd)
+	_, err := exec.Command(execCmd, cmdList...).Output()
 	if err != nil {
 		return fmt.Errorf("Failed to %s nat rule: %s: %v", op, cmd, err)
 	}

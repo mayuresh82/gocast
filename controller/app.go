@@ -2,9 +2,10 @@ package controller
 
 import (
 	"fmt"
-	"github.com/golang/glog"
 	"net"
 	"strings"
+
+	"github.com/golang/glog"
 )
 
 type MonitorType int

@@ -1,10 +1,6 @@
 package config
 
 import (
-	"os"
-	"os/signal"
-	"syscall"
-
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
@@ -24,55 +20,25 @@ type BgpConfigSet struct {
 	DynamicNeighbors  []DynamicNeighbor  `mapstructure:"dynamic-neighbors"`
 }
 
-func ReadConfigfileServe(path, format string, configCh chan *BgpConfigSet) {
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGHUP)
-
+func ReadConfigfile(path, format string) (*BgpConfigSet, error) {
 	// Update config file type, if detectable
 	format = detectConfigFileType(path, format)
 
-	cnt := 0
-	for {
-		c := &BgpConfigSet{}
-		v := viper.New()
-		v.SetConfigFile(path)
-		v.SetConfigType(format)
-		var err error
-		if err = v.ReadInConfig(); err != nil {
-			goto ERROR
-		}
-		if err = v.UnmarshalExact(c); err != nil {
-			goto ERROR
-		}
-		if err = setDefaultConfigValuesWithViper(v, c); err != nil {
-			goto ERROR
-		}
-		if cnt == 0 {
-			log.WithFields(log.Fields{
-				"Topic": "Config",
-			}).Info("Finished reading the config file")
-		}
-		cnt++
-		configCh <- c
-		goto NEXT
-	ERROR:
-		if cnt == 0 {
-			log.WithFields(log.Fields{
-				"Topic": "Config",
-				"Error": err,
-			}).Fatalf("Can't read config file %s", path)
-		} else {
-			log.WithFields(log.Fields{
-				"Topic": "Config",
-				"Error": err,
-			}).Warningf("Can't read config file %s", path)
-		}
-	NEXT:
-		<-sigCh
-		log.WithFields(log.Fields{
-			"Topic": "Config",
-		}).Info("Reload the config file")
+	config := &BgpConfigSet{}
+	v := viper.New()
+	v.SetConfigFile(path)
+	v.SetConfigType(format)
+	var err error
+	if err = v.ReadInConfig(); err != nil {
+		return nil, err
 	}
+	if err = v.UnmarshalExact(config); err != nil {
+		return nil, err
+	}
+	if err = setDefaultConfigValuesWithViper(v, config); err != nil {
+		return nil, err
+	}
+	return config, nil
 }
 
 func ConfigSetToRoutingPolicy(c *BgpConfigSet) *RoutingPolicy {

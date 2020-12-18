@@ -23,16 +23,16 @@ import (
 
 type AdjRib struct {
 	accepted map[bgp.RouteFamily]int
-	table    map[bgp.RouteFamily]map[string]*Path
+	table    map[bgp.RouteFamily]*Table
 }
 
 func NewAdjRib(rfList []bgp.RouteFamily) *AdjRib {
-	table := make(map[bgp.RouteFamily]map[string]*Path)
-	for _, rf := range rfList {
-		table[rf] = make(map[string]*Path)
+	m := make(map[bgp.RouteFamily]*Table)
+	for _, f := range rfList {
+		m[f] = NewTable(f)
 	}
 	return &AdjRib{
-		table:    table,
+		table:    m,
 		accepted: make(map[bgp.RouteFamily]int),
 	}
 }
@@ -43,56 +43,100 @@ func (adj *AdjRib) Update(pathList []*Path) {
 			continue
 		}
 		rf := path.GetRouteFamily()
-		key := fmt.Sprintf("%d:%s", path.GetNlri().PathIdentifier(), path.getPrefix())
+		t := adj.table[path.GetRouteFamily()]
+		d := t.getOrCreateDest(path.GetNlri(), 0)
+		var old *Path
+		idx := -1
+		for i, p := range d.knownPathList {
+			if p.GetNlri().PathIdentifier() == path.GetNlri().PathIdentifier() {
+				idx = i
+				break
+			}
+		}
+		if idx != -1 {
+			old = d.knownPathList[idx]
+		}
 
-		old, found := adj.table[rf][key]
 		if path.IsWithdraw {
-			if found {
-				delete(adj.table[rf], key)
-				if !old.IsAsLooped() {
+			if idx != -1 {
+				d.knownPathList = append(d.knownPathList[:idx], d.knownPathList[idx+1:]...)
+				if len(d.knownPathList) == 0 {
+					t.deleteDest(d)
+				}
+				if !old.IsRejected() {
 					adj.accepted[rf]--
 				}
 			}
+			path.SetDropped(true)
 		} else {
-			if found {
-				if old.IsAsLooped() && !path.IsAsLooped() {
+			if idx != -1 {
+				if old.IsRejected() && !path.IsRejected() {
 					adj.accepted[rf]++
-				} else if !old.IsAsLooped() && path.IsAsLooped() {
+				} else if !old.IsRejected() && path.IsRejected() {
 					adj.accepted[rf]--
 				}
+				if old.Equal(path) {
+					path.setTimestamp(old.GetTimestamp())
+				}
+				d.knownPathList[idx] = path
 			} else {
-				if !path.IsAsLooped() {
+				d.knownPathList = append(d.knownPathList, path)
+				if !path.IsRejected() {
 					adj.accepted[rf]++
 				}
 			}
-			if found && old.Equal(path) {
-				path.setTimestamp(old.GetTimestamp())
+		}
+	}
+}
+
+/* The provided pathList is expected to be the real candidate routes after policy evaluation.
+   For routes that are filtered by policy, there could be a mismatch between display
+   and actual rib sent to the peer (if softreset out was not run).
+   Only used to display adj-out because we do not maintain a separate adj-out table
+*/
+func (adj *AdjRib) UpdateAdjRibOut(pathList []*Path) {
+	for _, path := range pathList {
+		if path == nil || path.IsEOR() {
+			continue
+		}
+		t := adj.table[path.GetRouteFamily()]
+		d := t.getOrCreateDest(path.GetNlri(), 0)
+		d.knownPathList = append(d.knownPathList, path)
+	}
+}
+
+func (adj *AdjRib) walk(families []bgp.RouteFamily, fn func(*Destination) bool) {
+	for _, f := range families {
+		if t, ok := adj.table[f]; ok {
+			for _, d := range t.destinations {
+				if fn(d) {
+					return
+				}
 			}
-			adj.table[rf][key] = path
 		}
 	}
 }
 
 func (adj *AdjRib) PathList(rfList []bgp.RouteFamily, accepted bool) []*Path {
 	pathList := make([]*Path, 0, adj.Count(rfList))
-	for _, rf := range rfList {
-		for _, rr := range adj.table[rf] {
-			if accepted && rr.IsAsLooped() {
+	adj.walk(rfList, func(d *Destination) bool {
+		for _, p := range d.knownPathList {
+			if accepted && p.IsRejected() {
 				continue
 			}
-			pathList = append(pathList, rr)
+			pathList = append(pathList, p)
 		}
-	}
+		return false
+	})
 	return pathList
 }
 
 func (adj *AdjRib) Count(rfList []bgp.RouteFamily) int {
 	count := 0
-	for _, rf := range rfList {
-		if table, ok := adj.table[rf]; ok {
-			count += len(table)
-		}
-	}
+	adj.walk(rfList, func(d *Destination) bool {
+		count += len(d.knownPathList)
+		return false
+	})
 	return count
 }
 
@@ -106,70 +150,88 @@ func (adj *AdjRib) Accepted(rfList []bgp.RouteFamily) int {
 	return count
 }
 
-func (adj *AdjRib) Drop(rfList []bgp.RouteFamily) {
-	for _, rf := range rfList {
-		if _, ok := adj.table[rf]; ok {
-			adj.table[rf] = make(map[string]*Path)
-			adj.accepted[rf] = 0
+func (adj *AdjRib) Drop(rfList []bgp.RouteFamily) []*Path {
+	l := make([]*Path, 0, adj.Count(rfList))
+	adj.walk(rfList, func(d *Destination) bool {
+		for _, p := range d.knownPathList {
+			w := p.Clone(true)
+			w.SetDropped(true)
+			l = append(l, w)
 		}
+		return false
+	})
+	for _, rf := range rfList {
+		adj.table[rf] = NewTable(rf)
+		adj.accepted[rf] = 0
 	}
+	return l
 }
 
 func (adj *AdjRib) DropStale(rfList []bgp.RouteFamily) []*Path {
 	pathList := make([]*Path, 0, adj.Count(rfList))
-	for _, rf := range rfList {
-		if table, ok := adj.table[rf]; ok {
-			for k, p := range table {
-				if p.IsStale() {
-					delete(table, k)
-					if !p.IsAsLooped() {
-						adj.accepted[rf]--
-					}
-					pathList = append(pathList, p.Clone(true))
-				}
+	adj.walk(rfList, func(d *Destination) bool {
+		for _, p := range d.knownPathList {
+			if p.IsStale() {
+				w := p.Clone(true)
+				w.SetDropped(true)
+				pathList = append(pathList, w)
 			}
 		}
-	}
+		return false
+	})
+	adj.Update(pathList)
 	return pathList
 }
 
 func (adj *AdjRib) StaleAll(rfList []bgp.RouteFamily) []*Path {
-	pathList := make([]*Path, 0)
-	for _, rf := range rfList {
-		if table, ok := adj.table[rf]; ok {
-			l := make([]*Path, 0, len(table))
-			for k, p := range table {
-				n := p.Clone(false)
-				n.MarkStale(true)
-				table[k] = n
-				l = append(l, n)
-			}
-			if len(l) > 0 {
-				pathList = append(pathList, l...)
+	pathList := make([]*Path, 0, adj.Count(rfList))
+	adj.walk(rfList, func(d *Destination) bool {
+		for i, p := range d.knownPathList {
+			n := p.Clone(false)
+			n.MarkStale(true)
+			n.SetRejected(p.IsRejected())
+			d.knownPathList[i] = n
+			if !n.IsRejected() {
+				pathList = append(pathList, n)
 			}
 		}
-	}
+		return false
+	})
+	return pathList
+}
+
+func (adj *AdjRib) MarkLLGRStaleOrDrop(rfList []bgp.RouteFamily) []*Path {
+	pathList := make([]*Path, 0, adj.Count(rfList))
+	adj.walk(rfList, func(d *Destination) bool {
+		for i, p := range d.knownPathList {
+			if p.HasNoLLGR() {
+				n := p.Clone(true)
+				n.SetDropped(true)
+				pathList = append(pathList, n)
+			} else {
+				n := p.Clone(false)
+				n.SetRejected(p.IsRejected())
+				n.SetCommunities([]uint32{uint32(bgp.COMMUNITY_LLGR_STALE)}, false)
+				if p.IsRejected() {
+					d.knownPathList[i] = n
+				} else {
+					pathList = append(pathList, n)
+				}
+			}
+		}
+		return false
+	})
+	adj.Update(pathList)
 	return pathList
 }
 
 func (adj *AdjRib) Select(family bgp.RouteFamily, accepted bool, option ...TableSelectOption) (*Table, error) {
-	m := make(map[string][]*Path)
-	pl := adj.PathList([]bgp.RouteFamily{family}, accepted)
-	for _, path := range pl {
-		key := path.GetNlri().String()
-		if _, y := m[key]; y {
-			m[key] = append(m[key], path)
-		} else {
-			m[key] = []*Path{path}
-		}
+	t, ok := adj.table[family]
+	if !ok {
+		t = NewTable(family)
 	}
-	d := make([]*Destination, 0, len(pl))
-	for _, l := range m {
-		d = append(d, NewDestination(l[0].GetNlri(), 0, l...))
-	}
-	tbl := NewTable(family, d...)
 	option = append(option, TableSelectOption{adj: true})
-	return tbl.Select(option...)
+	return t.Select(option...)
 }
 
 func (adj *AdjRib) TableInfo(family bgp.RouteFamily) (*TableInfo, error) {
