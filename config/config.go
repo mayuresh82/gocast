@@ -1,34 +1,42 @@
 package config
 
 import (
-	"github.com/golang/glog"
-	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"path/filepath"
 	"time"
+
+	"github.com/golang/glog"
+	"gopkg.in/yaml.v2"
 )
 
+type AgentConfig struct {
+	ListenAddr          string        `yaml:"listen_addr"`
+	MonitorInterval     time.Duration `yaml:"monitor_interval"`
+	CleanupTimer        time.Duration `yaml:"cleanup_timer"`
+	ConsulAddr          string        `yaml:"consul_addr"`
+	ConsulQueryInterval time.Duration `yaml:"consul_query_interval"`
+}
+
+type BgpConfig struct {
+	LocalAS     int    `yaml:"local_as"`
+	PeerAS      int    `yaml:"peer_as"`
+	LocalIP     string `yaml:"local_ip"`
+	PeerIP      string `yaml:"peer_ip"`
+	Communities []string
+	Origin      string
+}
+
+type AppConfig struct {
+	Name     string
+	Vip      string
+	Monitors []string
+	Nats     []string
+}
+
 type Config struct {
-	Agent struct {
-		ListenAddr          string        `yaml:"listen_addr"`
-		MonitorInterval     time.Duration `yaml:"monitor_interval"`
-		CleanupTimer        time.Duration `yaml:"cleanup_timer"`
-		ConsulAddr          string        `yaml:"consul_addr"`
-		ConsulQueryInterval time.Duration `yaml:"consul_query_interval"`
-	}
-	Bgp struct {
-		LocalAS     int    `yaml:"local_as"`
-		PeerAS      int    `yaml:"peer_as"`
-		PeerIP      string `yaml:"peer_ip"`
-		Communities []string
-		Origin      string
-	}
-	Apps []struct {
-		Name     string
-		Vip      string
-		Monitors []string
-		Nats     []string
-	}
+	Agent AgentConfig
+	Bgp   BgpConfig
+	Apps  []AppConfig
 }
 
 func GetConfig(file string) *Config {

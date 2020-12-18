@@ -3,14 +3,15 @@ package controller
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
+	"strings"
+
 	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/ptypes/any"
 	c "github.com/mayuresh82/gocast/config"
 	api "github.com/osrg/gobgp/api"
 	gobgp "github.com/osrg/gobgp/pkg/server"
-	"net"
-	"strconv"
-	"strings"
 )
 
 type Controller struct {
@@ -22,22 +23,33 @@ type Controller struct {
 	s               *gobgp.BgpServer
 }
 
-func NewController(config *c.Config) (*Controller, error) {
+func NewController(config c.BgpConfig) (*Controller, error) {
 	c := &Controller{}
 	var gw net.IP
 	var err error
-	if config.Bgp.PeerIP == "" {
-		gw, err = gateway()
+	if config.PeerIP == "" {
+		gw, err := gateway()
+		if err != nil {
+			return nil, fmt.Errorf("Unable to get gw ip: %v", err)
+		}
 		c.peerIP = gw
 	} else {
-		c.peerIP = net.ParseIP(config.Bgp.PeerIP)
+		c.peerIP = net.ParseIP(config.PeerIP)
+	}
+	if config.LocalIP == "" {
 		gw, err = via(c.peerIP)
+		if err != nil {
+			return nil, fmt.Errorf("Unable to get gw ip: %v", err)
+		}
+		c.localIP, err = localAddress(gw)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		c.localIP = net.ParseIP(config.LocalIP)
 	}
-	if err != nil || c.peerIP == nil {
-		return nil, fmt.Errorf("Unable to get peer IP : %v", err)
-	}
-	c.communities = config.Bgp.Communities
-	switch config.Bgp.Origin {
+	c.communities = config.Communities
+	switch config.Origin {
 	case "igp":
 		c.origin = 0
 	case "egp":
@@ -47,24 +59,19 @@ func NewController(config *c.Config) (*Controller, error) {
 	}
 	s := gobgp.NewBgpServer()
 	go s.Serve()
-	localAddr, err := localAddress(gw)
-	if err != nil {
-		return nil, err
-	}
-	c.localIP = localAddr
 	if err := s.StartBgp(context.Background(), &api.StartBgpRequest{
 		Global: &api.Global{
-			As:         uint32(config.Bgp.LocalAS),
-			RouterId:   localAddr.String(),
+			As:         uint32(config.LocalAS),
+			RouterId:   c.localIP.String(),
 			ListenPort: -1, // gobgp won't listen on tcp:179
 		},
 	}); err != nil {
 		return nil, fmt.Errorf("Unable to start bgp: %v", err)
 	}
 	c.s = s
-	c.peerAS = config.Bgp.PeerAS
+	c.peerAS = config.PeerAS
 	// set mh by default for all ebgp peers
-	if c.peerAS != config.Bgp.LocalAS {
+	if c.peerAS != config.LocalAS {
 		c.multiHop = true
 	}
 	return c, nil
@@ -108,23 +115,21 @@ func (c *Controller) getApiPath(route *net.IPNet) *api.Path {
 	})
 	attrs := []*any.Any{a1, a2, a3}
 	return &api.Path{
-		Family:    &api.Family{Afi: afi, Safi: api.Family_SAFI_UNICAST},
-		AnyNlri:   nlri,
-		AnyPattrs: attrs,
+		Family: &api.Family{Afi: afi, Safi: api.Family_SAFI_UNICAST},
+		Nlri:   nlri,
+		Pattrs: attrs,
 	}
 }
 
 func (c *Controller) Announce(route *net.IPNet) error {
-	peers, err := c.s.ListPeer(context.Background(), &api.ListPeerRequest{})
-	if err != nil {
-		return err
-	}
 	var found bool
-	for _, p := range peers {
+	err := c.s.ListPeer(context.Background(), &api.ListPeerRequest{}, func(p *api.Peer) {
 		if p.Conf.NeighborAddress == c.peerIP.String() {
 			found = true
-			break
 		}
+	})
+	if err != nil {
+		return err
 	}
 	if !found {
 		if err := c.AddPeer(c.peerIP.String()); err != nil {
@@ -140,16 +145,16 @@ func (c *Controller) Withdraw(route *net.IPNet) error {
 }
 
 func (c *Controller) PeerInfo() (*api.Peer, error) {
-	peers, err := c.s.ListPeer(context.Background(), &api.ListPeerRequest{})
+	var peer *api.Peer
+	err := c.s.ListPeer(context.Background(), &api.ListPeerRequest{}, func(p *api.Peer) {
+		if p.Conf.NeighborAddress == c.peerIP.String() {
+			peer = p
+		}
+	})
 	if err != nil {
 		return nil, err
 	}
-	for _, p := range peers {
-		if p.Conf.NeighborAddress == c.peerIP.String() {
-			return p, nil
-		}
-	}
-	return nil, nil
+	return peer, nil
 }
 
 func (c *Controller) Shutdown() error {

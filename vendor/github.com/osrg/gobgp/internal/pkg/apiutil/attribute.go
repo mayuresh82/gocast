@@ -45,7 +45,9 @@ func UnmarshalAttribute(an *any.Any) (bgp.PathAttributeInterface, error) {
 	case *api.NextHopAttribute:
 		nexthop := net.ParseIP(a.NextHop).To4()
 		if nexthop == nil {
-			return nil, fmt.Errorf("invalid nexthop address: %s", a.NextHop)
+			if nexthop = net.ParseIP(a.NextHop).To16(); nexthop == nil {
+				return nil, fmt.Errorf("invalid nexthop address: %s", a.NextHop)
+			}
 		}
 		return bgp.NewPathAttributeNextHop(a.NextHop), nil
 	case *api.MultiExitDiscAttribute:
@@ -73,6 +75,8 @@ func UnmarshalAttribute(an *any.Any) (bgp.PathAttributeInterface, error) {
 			}
 		}
 		return bgp.NewPathAttributeClusterList(a.Ids), nil
+	case *api.PrefixSID:
+		return bgp.NewPathAttributePrefixSID(a)
 	}
 	return nil, errors.New("unexpected object")
 }
@@ -145,6 +149,114 @@ func NewClusterListAttributeFromNative(a *bgp.PathAttributeClusterList) *api.Clu
 	return &api.ClusterListAttribute{
 		Ids: ids,
 	}
+}
+
+func NewPrefixSIDAttributeFromNative(a *bgp.PathAttributePrefixSID) *api.PrefixSID {
+	psid := &api.PrefixSID{}
+	psid.Tlvs = MarshalSRv6TLVs(a.TLVs)
+
+	return psid
+}
+
+func MarshalSRv6TLVs(tlvs []bgp.PrefixSIDTLVInterface) []*any.Any {
+	mtlvs := make([]*any.Any, len(tlvs))
+	for i, tlv := range tlvs {
+		var r proto.Message
+		switch t := tlv.(type) {
+		case *bgp.SRv6L3ServiceAttribute:
+			o := &api.SRv6L3ServiceTLV{}
+			o.SubTlvs = MarshalSRv6SubTLVs(t.SubTLVs)
+			r = o
+		default:
+			log.WithFields(log.Fields{
+				"Topic": "protobuf",
+				"SRv6":  t,
+			}).Warn("invalid prefix sid tlv type to marshal")
+			return nil
+		}
+		a, _ := ptypes.MarshalAny(r)
+		mtlvs[i] = a
+	}
+
+	return mtlvs
+}
+
+func MarshalSRv6SubTLVs(tlvs []bgp.PrefixSIDTLVInterface) map[uint32]*api.SRv6TLV {
+	mtlvs := make(map[uint32]*api.SRv6TLV)
+	var key uint32
+	for _, tlv := range tlvs {
+		var r proto.Message
+		switch t := tlv.(type) {
+		case *bgp.SRv6InformationSubTLV:
+			o := &api.SRv6InformationSubTLV{
+				EndpointBehavior: uint32(t.EndpointBehavior),
+				// TODO Once flags are used in RFC, add processing.
+				Flags: &api.SRv6SIDFlags{},
+			}
+			o.Sid = make([]byte, len(t.SID))
+			copy(o.Sid, t.SID)
+			o.SubSubTlvs = MarshalSRv6SubSubTLVs(t.SubSubTLVs)
+			// SRv6 Information Sub TLV is type 1 Sub TLV
+			key = 1
+			r = o
+		default:
+			log.WithFields(log.Fields{
+				"Topic": "protobuf",
+				"SRv6":  t,
+			}).Warn("invalid prefix sid sub tlv type to marshal")
+			return nil
+		}
+		a, _ := ptypes.MarshalAny(r)
+		tlvs, ok := mtlvs[key]
+		if !ok {
+			tlvs = &api.SRv6TLV{
+				Tlv: make([]*any.Any, 0),
+			}
+			mtlvs[key] = tlvs
+		}
+		tlvs.Tlv = append(tlvs.Tlv, a)
+	}
+
+	return mtlvs
+}
+
+func MarshalSRv6SubSubTLVs(tlvs []bgp.PrefixSIDTLVInterface) map[uint32]*api.SRv6TLV {
+	mtlvs := make(map[uint32]*api.SRv6TLV)
+	var key uint32
+	for _, tlv := range tlvs {
+		var r proto.Message
+		switch t := tlv.(type) {
+		case *bgp.SRv6SIDStructureSubSubTLV:
+			o := &api.SRv6StructureSubSubTLV{
+				LocalBlockLength:    uint32(t.LocalBlockLength),
+				LocalNodeLength:     uint32(t.LocatorNodeLength),
+				FunctionLength:      uint32(t.FunctionLength),
+				ArgumentLength:      uint32(t.ArgumentLength),
+				TranspositionLength: uint32(t.TranspositionLength),
+				TranspositionOffset: uint32(t.TranspositionOffset),
+			}
+			// SRv6 SID Structure Sub Sub TLV is type 1 Sub Sub TLV
+			key = 1
+			r = o
+		default:
+			log.WithFields(log.Fields{
+				"Topic": "protobuf",
+				"SRv6":  t,
+			}).Warn("invalid prefix sid sub sub tlv type to marshal")
+			return nil
+		}
+		a, _ := ptypes.MarshalAny(r)
+		tlvs, ok := mtlvs[key]
+		if !ok {
+			tlvs = &api.SRv6TLV{
+				Tlv: make([]*any.Any, 0),
+			}
+			mtlvs[key] = tlvs
+		}
+		tlvs.Tlv = append(tlvs.Tlv, a)
+	}
+
+	return mtlvs
 }
 
 func MarshalRD(rd bgp.RouteDistinguisherInterface) *any.Any {
@@ -319,6 +431,88 @@ func UnmarshalFlowSpecRules(values []*any.Any) ([]bgp.FlowSpecComponentInterface
 	return rules, nil
 }
 
+func MarshalLsNodeDescriptor(d *bgp.LsNodeDescriptor) *api.LsNodeDescriptor {
+	return &api.LsNodeDescriptor{
+		Asn:         d.Asn,
+		BgpLsId:     d.BGPLsID,
+		OspfAreaId:  d.OspfAreaID,
+		Pseudonode:  d.PseudoNode,
+		IgpRouterId: d.IGPRouterID,
+	}
+}
+
+func MarshalLsLinkDescriptor(n *bgp.LsLinkDescriptor) *api.LsLinkDescriptor {
+	return &api.LsLinkDescriptor{
+		LinkLocalId:       uint32OrDefault(n.LinkLocalID),
+		LinkRemoteId:      uint32OrDefault(n.LinkRemoteID),
+		InterfaceAddrIpv4: ipOrDefault(n.InterfaceAddrIPv4),
+		NeighborAddrIpv4:  ipOrDefault(n.NeighborAddrIPv4),
+		InterfaceAddrIpv6: ipOrDefault(n.InterfaceAddrIPv6),
+		NeighborAddrIpv6:  ipOrDefault(n.NeighborAddrIPv6),
+	}
+}
+
+func MarshalLsPrefixDescriptor(d *bgp.LsPrefixDescriptor) *api.LsPrefixDescriptor {
+	p := &api.LsPrefixDescriptor{
+		OspfRouteType: d.OSPFRouteType.String(),
+	}
+
+	for _, ip := range d.IPReachability {
+		p.IpReachability = append(p.IpReachability, ip.String())
+	}
+
+	return p
+}
+
+func MarshalLsNodeNLRI(n *bgp.LsNodeNLRI) *any.Any {
+	node := &api.LsNodeNLRI{
+		LocalNode: MarshalLsNodeDescriptor(n.LocalNodeDesc.(*bgp.LsTLVNodeDescriptor).Extract()),
+	}
+	a, _ := ptypes.MarshalAny(node)
+
+	return a
+}
+
+func MarshalLsLinkNLRI(n *bgp.LsLinkNLRI) *any.Any {
+	desc := &bgp.LsLinkDescriptor{}
+	desc.ParseTLVs(n.LinkDesc)
+
+	link := &api.LsLinkNLRI{
+		LocalNode:      MarshalLsNodeDescriptor(n.LocalNodeDesc.(*bgp.LsTLVNodeDescriptor).Extract()),
+		RemoteNode:     MarshalLsNodeDescriptor(n.RemoteNodeDesc.(*bgp.LsTLVNodeDescriptor).Extract()),
+		LinkDescriptor: MarshalLsLinkDescriptor(desc),
+	}
+	a, _ := ptypes.MarshalAny(link)
+
+	return a
+}
+
+func MarshalLsPrefixV4NLRI(n *bgp.LsPrefixV4NLRI) *any.Any {
+	desc := &bgp.LsPrefixDescriptor{}
+	desc.ParseTLVs(n.PrefixDesc, false)
+
+	prefix := &api.LsPrefixV4NLRI{
+		LocalNode:        MarshalLsNodeDescriptor(n.LocalNodeDesc.(*bgp.LsTLVNodeDescriptor).Extract()),
+		PrefixDescriptor: MarshalLsPrefixDescriptor(desc),
+	}
+	a, _ := ptypes.MarshalAny(prefix)
+
+	return a
+}
+
+func MarshalLsPrefixV6NLRI(n *bgp.LsPrefixV6NLRI) *any.Any {
+	desc := &bgp.LsPrefixDescriptor{}
+	desc.ParseTLVs(n.PrefixDesc, true)
+
+	prefix := &api.LsPrefixV6NLRI{
+		LocalNode:        MarshalLsNodeDescriptor(n.LocalNodeDesc.(*bgp.LsTLVNodeDescriptor).Extract()),
+		PrefixDescriptor: MarshalLsPrefixDescriptor(desc),
+	}
+	a, _ := ptypes.MarshalAny(prefix)
+
+	return a
+}
+
 func MarshalNLRI(value bgp.AddrPrefixInterface) *any.Any {
 	var nlri proto.Message
 
@@ -435,6 +629,32 @@ func MarshalNLRI(value bgp.AddrPrefixInterface) *any.Any {
 		nlri = &api.VPNFlowSpecNLRI{
 			Rd:    MarshalRD(v.RD()),
 			Rules: MarshalFlowSpecRules(v.Value),
+		}
+	case *bgp.LsAddrPrefix:
+		switch n := v.NLRI.(type) {
+		case *bgp.LsNodeNLRI:
+			nlri = &api.LsAddrPrefix{
+				Type: api.LsNLRIType_LS_NLRI_NODE,
+				Nlri: MarshalLsNodeNLRI(n),
+			}
+
+		case *bgp.LsLinkNLRI:
+			nlri = &api.LsAddrPrefix{
+				Type: api.LsNLRIType_LS_NLRI_LINK,
+				Nlri: MarshalLsLinkNLRI(n),
+			}
+
+		case *bgp.LsPrefixV4NLRI:
+			nlri = &api.LsAddrPrefix{
+				Type: api.LsNLRIType_LS_NLRI_PREFIX_V4,
+				Nlri: MarshalLsPrefixV4NLRI(n),
+			}
+
+		case *bgp.LsPrefixV6NLRI:
+			nlri = &api.LsAddrPrefix{
+				Type: api.LsNLRIType_LS_NLRI_PREFIX_V6,
+				Nlri: MarshalLsPrefixV6NLRI(n),
+			}
 		}
 	}
 
@@ -1011,6 +1231,133 @@ func NewLargeCommunitiesAttributeFromNative(a *bgp.PathAttributeLargeCommunities
 	}
 }
 
+func stringOrDefault(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func bytesOrDefault(b *[]byte) []byte {
+	if b == nil {
+		return []byte{}
+	}
+	return *b
+}
+
+func ipOrDefault(ip *net.IP) string {
+	if ip == nil {
+		return ""
+	}
+	return ip.String()
+}
+
+func uint32OrDefault(i *uint32) uint32 {
+	if i == nil {
+		return 0
+	}
+	return *i
+}
+
+func float32OrDefault(f *float32) float32 {
+	if f == nil {
+		return 0.0
+	}
+	return *f
+}
+
+func NewLsAttributeFromNative(a *bgp.PathAttributeLs) *api.LsAttribute {
+	attr := a.Extract()
+
+	apiAttr := &api.LsAttribute{
+		Node: &api.LsAttributeNode{
+			Name:            stringOrDefault(attr.Node.Name),
+			Opaque:          bytesOrDefault(attr.Node.Opaque),
+			IsisArea:        bytesOrDefault(attr.Node.IsisArea),
+			LocalRouterId:   ipOrDefault(attr.Node.LocalRouterID),
+			LocalRouterIdV6: ipOrDefault(attr.Node.LocalRouterIDv6),
+
+			SrAlgorithms: bytesOrDefault(attr.Node.SrAlgorithms),
+		},
+		Link: &api.LsAttributeLink{
+			Name:             stringOrDefault(attr.Link.Name),
+			Opaque:           bytesOrDefault(attr.Link.Opaque),
+			LocalRouterId:    ipOrDefault(attr.Link.LocalRouterID),
+			LocalRouterIdV6:  ipOrDefault(attr.Link.LocalRouterIDv6),
+			RemoteRouterId:   ipOrDefault(attr.Link.RemoteRouterID),
+			RemoteRouterIdV6: ipOrDefault(attr.Link.RemoteRouterIDv6),
+			AdminGroup:       uint32OrDefault(attr.Link.AdminGroup),
+			DefaultTeMetric:  uint32OrDefault(attr.Link.DefaultTEMetric),
+			IgpMetric:        uint32OrDefault(attr.Link.IGPMetric),
+
+			Bandwidth:           float32OrDefault(attr.Link.Bandwidth),
+			ReservableBandwidth: float32OrDefault(attr.Link.ReservableBandwidth),
+			SrAdjacencySid:      uint32OrDefault(attr.Link.SrAdjacencySID),
+		},
+		Prefix: &api.LsAttributePrefix{
+			Opaque: bytesOrDefault(attr.Prefix.Opaque),
+
+			SrPrefixSid: uint32OrDefault(attr.Prefix.SrPrefixSID),
+		},
+	}
+
+	if attr.Node.Flags != nil {
+		apiAttr.Node.Flags = &api.LsNodeFlags{
+			Overload: attr.Node.Flags.Overload,
+			Attached: attr.Node.Flags.Attached,
+			External: attr.Node.Flags.External,
+			Abr:      attr.Node.Flags.ABR,
+			Router:   attr.Node.Flags.Router,
+			V6:       attr.Node.Flags.V6,
+		}
+	}
+
+	if attr.Node.SrCapabilties != nil {
+		apiAttr.Node.SrCapabilities = &api.LsSrCapabilities{
+			Ipv4Supported: attr.Node.SrCapabilties.IPv4Supported,
+			Ipv6Supported: attr.Node.SrCapabilties.IPv6Supported,
+		}
+
+		for _, r := range attr.Node.SrCapabilties.Ranges {
+			apiAttr.Node.SrCapabilities.Ranges = append(apiAttr.Node.SrCapabilities.Ranges, &api.LsSrRange{
+				Begin: r.Begin,
+				End:   r.End,
+			})
+		}
+	}
+
+	if attr.Node.SrLocalBlock != nil {
+		apiAttr.Node.SrLocalBlock = &api.LsSrLocalBlock{}
+		for _, r := range attr.Node.SrLocalBlock.Ranges {
+			apiAttr.Node.SrLocalBlock.Ranges = append(apiAttr.Node.SrLocalBlock.Ranges, &api.LsSrRange{
+				Begin: r.Begin,
+				End:   r.End,
+			})
+		}
+	}
+
+	if attr.Link.UnreservedBandwidth != nil {
+		for _, f := range attr.Link.UnreservedBandwidth {
+			apiAttr.Link.UnreservedBandwidth = append(apiAttr.Link.UnreservedBandwidth, f)
+		}
+	}
+
+	if attr.Link.Srlgs != nil {
+		apiAttr.Link.Srlgs = append(apiAttr.Link.Srlgs, *attr.Link.Srlgs...)
+	}
+
+	if attr.Prefix.IGPFlags != nil {
+		apiAttr.Prefix.IgpFlags = &api.LsIGPFlags{
+			Down:          attr.Prefix.IGPFlags.Down,
+			NoUnicast:     attr.Prefix.IGPFlags.NoUnicast,
+			LocalAddress:  attr.Prefix.IGPFlags.LocalAddress,
+			PropagateNssa: attr.Prefix.IGPFlags.PropagateNSSA,
+		}
+	}
+
+	return apiAttr
+}
+
 func NewUnknownAttributeFromNative(a *bgp.PathAttributeUnknown) *api.UnknownAttribute {
 	return &api.UnknownAttribute{
 		Flags: uint32(a.Flags),
@@ -1083,6 +1430,9 @@ func MarshalPathAttributes(attrList []bgp.PathAttributeInterface) []*any.Any {
 		case *bgp.PathAttributeLargeCommunities:
 			n, _ := ptypes.MarshalAny(NewLargeCommunitiesAttributeFromNative(a))
 			anyList = append(anyList, n)
+		case *bgp.PathAttributeLs:
+			n, _ := ptypes.MarshalAny(NewLsAttributeFromNative(a))
+			anyList = append(anyList, n)
 		case *bgp.PathAttributeUnknown:
 			n, _ := ptypes.MarshalAny(NewUnknownAttributeFromNative(a))
 			anyList = append(anyList, n)
@@ -1125,7 +1475,9 @@ func unmarshalAttribute(an *any.Any) (bgp.PathAttributeInterface, error) {
 	case *api.NextHopAttribute:
 		nexthop := net.ParseIP(a.NextHop).To4()
 		if nexthop == nil {
-			return nil, fmt.Errorf("invalid nexthop address: %s", a.NextHop)
+			if nexthop = net.ParseIP(a.NextHop).To16(); nexthop == nil {
+				return nil, fmt.Errorf("invalid nexthop address: %s", a.NextHop)
+			}
 		}
 		return bgp.NewPathAttributeNextHop(a.NextHop), nil
 	case *api.MultiExitDiscAttribute:
@@ -1295,7 +1647,8 @@ func unmarshalAttribute(an *any.Any) (bgp.PathAttributeInterface, error) {
 			communities = append(communities, bgp.NewLargeCommunity(c.GlobalAdmin, c.LocalData1, c.LocalData2))
 		}
 		return bgp.NewPathAttributeLargeCommunities(communities), nil
-
+	case *api.PrefixSID:
+		return bgp.NewPathAttributePrefixSID(a)
 	case *api.UnknownAttribute:
 		return bgp.NewPathAttributeUnknown(bgp.BGPAttrFlag(a.Flags), bgp.BGPAttrType(a.Type), a.Value), nil
 	}

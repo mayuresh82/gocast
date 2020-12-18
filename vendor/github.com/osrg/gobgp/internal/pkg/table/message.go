@@ -85,9 +85,9 @@ func UpdatePathAttrs4ByteAs(msg *bgp.BGPUpdate) error {
 	asAttrPos := 0
 	as4AttrPos := 0
 	for i, attr := range msg.PathAttributes {
-		switch attr.(type) {
+		switch a := attr.(type) {
 		case *bgp.PathAttributeAsPath:
-			asAttr = attr.(*bgp.PathAttributeAsPath)
+			asAttr = a
 			for j, param := range asAttr.Value {
 				as2Param, ok := param.(*bgp.AsPathParam)
 				if ok {
@@ -103,7 +103,7 @@ func UpdatePathAttrs4ByteAs(msg *bgp.BGPUpdate) error {
 			msg.PathAttributes[i] = asAttr
 		case *bgp.PathAttributeAs4Path:
 			as4AttrPos = i
-			as4Attr = attr.(*bgp.PathAttributeAs4Path)
+			as4Attr = a
 		}
 	}
 
@@ -130,8 +130,9 @@ func UpdatePathAttrs4ByteAs(msg *bgp.BGPUpdate) error {
 	}
 
 	as4Len := 0
-	as4Params := make([]bgp.AsPathParamInterface, 0, len(as4Attr.Value))
+	var as4Params []bgp.AsPathParamInterface
 	if as4Attr != nil {
+		as4Params = make([]bgp.AsPathParamInterface, 0, len(as4Attr.Value))
 		for _, p := range as4Attr.Value {
 			// RFC 6793 6. Error Handling
 			//
@@ -211,9 +212,8 @@ func UpdatePathAggregator2ByteAs(msg *bgp.BGPUpdate) {
 	as := uint32(0)
 	var addr string
 	for i, attr := range msg.PathAttributes {
-		switch attr.(type) {
+		switch agg := attr.(type) {
 		case *bgp.PathAttributeAggregator:
-			agg := attr.(*bgp.PathAttributeAggregator)
 			addr = agg.Value.Address.String()
 			if agg.Value.AS > (1<<16)-1 {
 				as = agg.Value.AS
@@ -233,15 +233,15 @@ func UpdatePathAggregator4ByteAs(msg *bgp.BGPUpdate) error {
 	var agg4Attr *bgp.PathAttributeAs4Aggregator
 	agg4AttrPos := 0
 	for i, attr := range msg.PathAttributes {
-		switch attr.(type) {
+		switch agg := attr.(type) {
 		case *bgp.PathAttributeAggregator:
-			attr := attr.(*bgp.PathAttributeAggregator)
+			attr := agg
 			if attr.Value.Askind == reflect.Uint16 {
 				aggAttr = attr
 				aggAttr.Value.Askind = reflect.Uint32
 			}
 		case *bgp.PathAttributeAs4Aggregator:
-			agg4Attr = attr.(*bgp.PathAttributeAs4Aggregator)
+			agg4Attr = agg
 			agg4AttrPos = i
 		}
 	}

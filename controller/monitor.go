@@ -2,14 +2,15 @@ package controller
 
 import (
 	"fmt"
-	"github.com/golang/glog"
-	c "github.com/mayuresh82/gocast/config"
-	api "github.com/osrg/gobgp/api"
 	"net"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/golang/glog"
+	c "github.com/mayuresh82/gocast/config"
+	api "github.com/osrg/gobgp/api"
 )
 
 const (
@@ -52,6 +53,7 @@ func execMonitor(cmd string) bool {
 	return true
 }
 
+// appMon maintains the state of a registered app
 type appMon struct {
 	app       *App
 	done      chan bool
@@ -59,6 +61,7 @@ type appMon struct {
 	checkOn   bool
 }
 
+// MonitorMgr manages the lifecycle of registered apps
 type MonitorMgr struct {
 	monitors map[string]*appMon
 	cleanups map[string]chan bool
@@ -70,7 +73,7 @@ type MonitorMgr struct {
 }
 
 func NewMonitor(config *c.Config) *MonitorMgr {
-	ctrl, err := NewController(config)
+	ctrl, err := NewController(config.Bgp)
 	if err != nil {
 		glog.Exitf("Failed to start BGP controller: %v", err)
 	}
@@ -107,6 +110,8 @@ func NewMonitor(config *c.Config) *MonitorMgr {
 	return mon
 }
 
+// consulMon periodically queries consul for apps that need to be
+// registered and adds them to the monitor manager
 func (m *MonitorMgr) consulMon() {
 	for {
 		apps, err := m.consul.queryServices()
@@ -144,6 +149,7 @@ func (m *MonitorMgr) consulMon() {
 	}
 }
 
+// Add adds a new app into monitor manager
 func (m *MonitorMgr) Add(app *App) {
 	// check if already running
 	m.Lock()
@@ -165,6 +171,8 @@ func (m *MonitorMgr) Add(app *App) {
 	glog.Infof("Registered a new app: %v", app)
 }
 
+// Remove removes an app from monitor manager, stops BGP
+/// announcement and cleans up state
 func (m *MonitorMgr) Remove(appName string) {
 	if a, ok := m.monitors[appName]; ok {
 		if a.checkOn {
@@ -254,6 +262,8 @@ func (m *MonitorMgr) checkCond(am *appMon) error {
 	return nil
 }
 
+// runLoop periodically checks if an app passes healthchecks
+// and needs VIP announcement
 func (m *MonitorMgr) runLoop(am *appMon) {
 	am.checkOn = true
 	if err := m.checkCond(am); err != nil {
@@ -274,6 +284,7 @@ func (m *MonitorMgr) runLoop(am *appMon) {
 	}
 }
 
+// CloseAll shuts down all BGP sessions removes state
 func (m *MonitorMgr) CloseAll() {
 	glog.Infof("Shutting down all open bgp sessions")
 	if err := m.ctrl.Shutdown(); err != nil {
@@ -294,6 +305,7 @@ func (m *MonitorMgr) CloseAll() {
 	}
 }
 
+// CleanUp periodically monitors for stale apps and cleans them up
 func (m *MonitorMgr) Cleanup(app string, exit chan bool) {
 	t := time.NewTimer(m.config.Agent.CleanupTimer)
 	defer t.Stop()
@@ -310,6 +322,7 @@ func (m *MonitorMgr) Cleanup(app string, exit chan bool) {
 	}
 }
 
+// GetInfo returns basic BGP info for established peers
 func (m *MonitorMgr) GetInfo() (*api.Peer, error) {
 	return m.ctrl.PeerInfo()
 }

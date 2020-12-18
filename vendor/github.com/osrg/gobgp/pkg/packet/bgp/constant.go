@@ -16,7 +16,7 @@
 package bgp
 
 import (
-	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -24,6 +24,7 @@ const AS_TRANS = 23456
 
 const BGP_PORT = 179
 
+//go:generate stringer -type=FSMState
 type FSMState int
 
 const (
@@ -73,7 +74,7 @@ var ProtocolNameMap = map[Protocol]string{
 func (p Protocol) String() string {
 	name, ok := ProtocolNameMap[p]
 	if !ok {
-		return fmt.Sprintf("%d", p)
+		return strconv.Itoa(int(p))
 	}
 	return name
 }
@@ -161,7 +162,7 @@ var BitmaskFlagOpValueMap = map[string]BitmaskFlagOp{
 }
 
 func (f BitmaskFlagOp) String() string {
-	ops := make([]string, 0)
+	ops := make([]string, 0, 3)
 	if f&BITMASK_FLAG_OP_AND > 0 {
 		ops = append(ops, BitmaskFlagOpNameMap[BITMASK_FLAG_OP_AND])
 	} else {
@@ -323,5 +324,5 @@ func (t EthernetType) String() string {
 	if name, ok := EthernetTypeNameMap[t]; ok {
 		return name
 	}
-	return fmt.Sprintf("%d", t)
+	return strconv.Itoa(int(t))
 }

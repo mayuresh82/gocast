@@ -17,11 +17,12 @@ package table
 
 import (
 	"fmt"
+	"math/bits"
 	"net"
 	"strings"
 	"unsafe"
 
-	"github.com/armon/go-radix"
+	"github.com/k-sone/critbitgo"
 	"github.com/osrg/gobgp/pkg/packet/bgp"
 	log "github.com/sirupsen/logrus"
 )
@@ -75,13 +76,13 @@ func (t *Table) deletePathsByVrf(vrf *Vrf) []*Path {
 		for _, p := range dest.knownPathList {
 			var rd bgp.RouteDistinguisherInterface
 			nlri := p.GetNlri()
-			switch nlri.(type) {
+			switch v := nlri.(type) {
 			case *bgp.LabeledVPNIPAddrPrefix:
-				rd = nlri.(*bgp.LabeledVPNIPAddrPrefix).RD
+				rd = v.RD
 			case *bgp.LabeledVPNIPv6AddrPrefix:
-				rd = nlri.(*bgp.LabeledVPNIPv6AddrPrefix).RD
+				rd = v.RD
 			case *bgp.EVPNNLRI:
-				rd = nlri.(*bgp.EVPNNLRI).RD()
+				rd = v.RD()
 			default:
 				return pathList
 			}
@@ -117,15 +118,14 @@ func (t *Table) deleteRTCPathsByVrf(vrf *Vrf, vrfs map[string]*Vrf) []*Path {
 	return pathList
 }
 
-func (t *Table) deleteDestByNlri(nlri bgp.AddrPrefixInterface) *Destination {
-	if dst := t.GetDestination(nlri); dst != nil {
-		t.deleteDest(dst)
-		return dst
-	}
-	return nil
-}
-
 func (t *Table) deleteDest(dest *Destination) {
+	count := 0
+	for _, v := range dest.localIdMap.bitmap {
+		count += bits.OnesCount64(v)
+	}
+	if len(dest.localIdMap.bitmap) != 0 && count != 1 {
+		return
+	}
 	destinations := t.GetDestinations()
 	delete(destinations, t.tableKey(dest.GetNlri()))
 	if len(destinations) == 0 {
@@ -175,7 +175,7 @@ func (t *Table) validatePath(path *Path) {
 	}
 }
 
-func (t *Table) getOrCreateDest(nlri bgp.AddrPrefixInterface) *Destination {
+func (t *Table) getOrCreateDest(nlri bgp.AddrPrefixInterface, size int) *Destination {
 	dest := t.GetDestination(nlri)
 	// If destination for given prefix does not exist we create it.
 	if dest == nil {
@@ -183,7 +183,7 @@ func (t *Table) getOrCreateDest(nlri bgp.AddrPrefixInterface) *Destination {
 			"Topic": "Table",
 			"Nlri":  nlri,
 		}).Debugf("create Destination")
-		dest = NewDestination(nlri, 64)
+		dest = NewDestination(nlri, size)
 		t.setDestination(dest)
 	}
 	return dest
@@ -212,14 +212,13 @@ func (t *Table) GetLongerPrefixDestinations(key string) ([]*Destination, error) 
 		if err != nil {
 			return nil, err
 		}
-		k := CidrToRadixkey(prefix.String())
-		r := radix.New()
+		r := critbitgo.NewNet()
 		for _, dst := range t.GetDestinations() {
-			r.Insert(AddrToRadixkey(dst.nlri), dst)
+			r.Add(nlriToIPNet(dst.nlri), dst)
 		}
-		r.WalkPrefix(k, func(s string, v interface{}) bool {
+		r.WalkPrefix(prefix, func(_ *net.IPNet, v interface{}) bool {
 			results = append(results, v.(*Destination))
-			return false
+			return true
 		})
 	default:
 		for _, dst := range t.GetDestinations() {
@@ -435,13 +434,45 @@ type TableInfo struct {
 	NumAccepted    int
 }
 
-func (t *Table) Info(id string, as uint32) *TableInfo {
+type TableInfoOptions struct {
+	ID  string
+	AS  uint32
+	VRF *Vrf
+}
+
+func (t *Table) Info(option ...TableInfoOptions) *TableInfo {
 	var numD, numP int
+
+	id := GLOBAL_RIB_NAME
+	var vrf *Vrf
+	as := uint32(0)
+
+	for _, o := range option {
+		if o.ID != "" {
+			id = o.ID
+		}
+		if o.VRF != nil {
+			vrf = o.VRF
+		}
+		as = o.AS
+	}
+
 	for _, d := range t.destinations {
-		ps := d.GetKnownPathList(id, as)
-		if len(ps) > 0 {
-			numD += 1
-			numP += len(ps)
+		paths := d.GetKnownPathList(id, as)
+		n := len(paths)
+
+		if vrf != nil {
+			ps := make([]*Path, 0, len(paths))
+			for _, p := range paths {
+				if CanImportToVrf(vrf, p) {
+					ps = append(ps, p.ToLocal())
+				}
+			}
+			n = len(ps)
+		}
+		if n != 0 {
+			numD++
+			numP += n
 		}
 	}
 	return &TableInfo{
