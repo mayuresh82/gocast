@@ -71,6 +71,11 @@ func (a *App) Equal(other *App) bool {
 	return a.Name == other.Name && a.Vip.Net.String() == other.Vip.Net.String()
 }
 
+func (a *App) String() string {
+	return fmt.Sprintf("Name: %s, Vip: %s, VipConf: %v, Monitors: %v, Nats: %v, Source: %s",
+		a.Name, a.Vip.Net.String(), a.VipConfig, a.Monitors, a.Nats, a.Source)
+}
+
 func NewApp(appName, vip string, vipConfig config.VipConfig, monitors []string, nats []string, source string) (*App, error) {
 	if appName == "" {
 		return nil, fmt.Errorf("Invalid app name")

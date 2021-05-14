@@ -168,7 +168,7 @@ func (m *MonitorMgr) Add(app *App) {
 	appMon := &appMon{app: app, done: make(chan bool)}
 	m.monitors[app.Name] = appMon
 	go m.runLoop(appMon)
-	glog.Infof("Registered a new app: %v", app)
+	glog.Infof("Registered a new app: %v", app.String())
 }
 
 // Remove removes an app from monitor manager, stops BGP
