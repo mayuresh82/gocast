@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/mayuresh82/gocast/config"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -15,7 +16,7 @@ var mockConsulData = map[string]string{
 			"ID": "test-app-1",
 			"Service": "test-service",
 			"Tags": [
-				"enable_gocast", "gocast_vip=1.1.1.1/32", "gocast_monitor=consul"
+				"enable_gocast", "gocast_vip=1.1.1.1/32", "gocast_monitor=consul", "gocast_vip_communities=111:222,333:444"
 			]
 		}
 	}}`,
@@ -103,7 +104,9 @@ func TestQueryServices(t *testing.T) {
 		a.FailNow(err.Error())
 	}
 	a.Equal(1, len(apps))
-	app, _ := NewApp("test-service", "1.1.1.1/32", []string{"consul"}, []string{}, "consul")
+	a.Equal([]string{"111:222", "333:444"}, apps[0].Vip.Communities)
+
+	app, _ := NewApp("test-service", "1.1.1.1/32", config.VipConfig{}, []string{"consul"}, []string{}, "consul")
 	a.True(app.Equal(apps[0]))
 
 	// test no match

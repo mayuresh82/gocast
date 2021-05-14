@@ -93,7 +93,8 @@ func TestBgpNew(t *testing.T) {
 		a.FailNow(err.Error())
 	}
 	_, ipnet, _ := net.ParseCIDR("20.30.40.0/24")
-	if err := ctrl.Announce(ipnet); err != nil {
+	r := &Route{Net: ipnet}
+	if err := ctrl.Announce(r); err != nil {
 		a.FailNow(err.Error())
 	}
 

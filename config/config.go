@@ -26,11 +26,18 @@ type BgpConfig struct {
 	Origin      string
 }
 
+type VipConfig struct {
+	// per VIP BGP communities to announce. This is in addition to the
+	// global config
+	BgpCommunities []string `yaml:"bgp_communities"`
+}
+
 type AppConfig struct {
-	Name     string
-	Vip      string
-	Monitors []string
-	Nats     []string
+	Name      string
+	Vip       string
+	VipConfig VipConfig `yaml:"vip_config"`
+	Monitors  []string
+	Nats      []string
 }
 
 type Config struct {
