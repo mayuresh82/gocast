@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/golang/glog"
-	"github.com/mayuresh82/gocast/controller"
 	"net/http"
+	"strings"
+
+	"github.com/golang/glog"
+	"github.com/mayuresh82/gocast/config"
+	"github.com/mayuresh82/gocast/controller"
 )
 
 // Server is the main entrypoint into the app and serves app requests
@@ -46,7 +49,11 @@ func (s *Server) Serve(ctx context.Context) {
 
 func (s *Server) registerHandler(w http.ResponseWriter, r *http.Request) {
 	queries := r.URL.Query()
-	app, err := controller.NewApp(queries["name"][0], queries["vip"][0], queries["monitor"], queries["nat"], "http")
+	var vipConf config.VipConfig
+	if vipComm, ok := queries["vip_communities"]; ok {
+		vipConf.BgpCommunities = strings.Split(vipComm[0], ",")
+	}
+	app, err := controller.NewApp(queries["name"][0], queries["vip"][0], vipConf, queries["monitor"], queries["nat"], "http")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
 		return

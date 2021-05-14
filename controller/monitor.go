@@ -100,7 +100,7 @@ func NewMonitor(config *c.Config) *MonitorMgr {
 	mon.config = config
 	// add apps defined in config
 	for _, a := range config.Apps {
-		app, err := NewApp(a.Name, a.Vip, a.Monitors, a.Nats, "config")
+		app, err := NewApp(a.Name, a.Vip, a.VipConfig, a.Monitors, a.Nats, "config")
 		if err != nil {
 			glog.Errorf("Failed to add configured app %s: %v", a.Name, err)
 			continue
@@ -159,8 +159,8 @@ func (m *MonitorMgr) Add(app *App) {
 			glog.V(2).Infof("App %s already exists", app.Name)
 			return
 		}
-		if appMon.app.Vip.String() == app.Vip.String() && appMon.app.Name != app.Name {
-			glog.Errorf("Error: Vip %s is already being announced by app: %s", app.Vip.String(), appMon.app.Name)
+		if appMon.app.Vip.Net.String() == app.Vip.Net.String() && appMon.app.Name != app.Name {
+			glog.Errorf("Error: Vip %s is already being announced by app: %s", app.Vip.Net.String(), appMon.app.Name)
 			return
 		}
 	}
@@ -183,7 +183,7 @@ func (m *MonitorMgr) Remove(appName string) {
 				glog.Errorf("Failed to withdraw route: %v", err)
 			}
 		}
-		if err := deleteLoopback(a.app.Vip); err != nil {
+		if err := deleteLoopback(a.app.Vip.Net); err != nil {
 			glog.Errorf("Failed to remove app: %s: %v", a.app.Name, err)
 		}
 		for _, nat := range a.app.Nats {
@@ -191,7 +191,7 @@ func (m *MonitorMgr) Remove(appName string) {
 			if len(parts) != 2 {
 				continue
 			}
-			if err := natRule("D", a.app.Vip.IP, m.ctrl.localIP, parts[0], parts[1]); err != nil {
+			if err := natRule("D", a.app.Vip.Net.IP, m.ctrl.localIP, parts[0], parts[1]); err != nil {
 				glog.Errorf("Failed to remove app: %s: %v", a.app.Name, err)
 			}
 		}
@@ -228,7 +228,7 @@ func (m *MonitorMgr) checkCond(am *appMon) error {
 	if m.runMonitors(app) {
 		glog.V(2).Infof("All Monitors for app: %s succeeded", app.Name)
 		if !am.announced {
-			if err := addLoopback(app.Name, app.Vip); err != nil {
+			if err := addLoopback(app.Name, app.Vip.Net); err != nil {
 				return err
 			}
 			for _, nat := range app.Nats {
@@ -236,7 +236,7 @@ func (m *MonitorMgr) checkCond(am *appMon) error {
 				if len(parts) != 2 {
 					continue
 				}
-				if err := natRule("A", app.Vip.IP, m.ctrl.localIP, parts[0], parts[1]); err != nil {
+				if err := natRule("A", app.Vip.Net.IP, m.ctrl.localIP, parts[0], parts[1]); err != nil {
 					return err
 				}
 			}
@@ -294,13 +294,13 @@ func (m *MonitorMgr) CloseAll() {
 		if am.checkOn {
 			am.done <- true
 		}
-		deleteLoopback(am.app.Vip)
+		deleteLoopback(am.app.Vip.Net)
 		for _, nat := range am.app.Nats {
 			parts := strings.Split(nat, ":")
 			if len(parts) != 2 {
 				continue
 			}
-			natRule("D", am.app.Vip.IP, m.ctrl.localIP, parts[0], parts[1])
+			natRule("D", am.app.Vip.Net.IP, m.ctrl.localIP, parts[0], parts[1])
 		}
 	}
 }

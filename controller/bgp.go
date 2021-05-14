@@ -14,6 +14,11 @@ import (
 	gobgp "github.com/osrg/gobgp/pkg/server"
 )
 
+type Route struct {
+	Net         *net.IPNet
+	Communities []string
+}
+
 type Controller struct {
 	peerAS          int
 	localIP, peerIP net.IP
@@ -90,14 +95,14 @@ func (c *Controller) AddPeer(peer string) error {
 	return c.s.AddPeer(context.Background(), &api.AddPeerRequest{Peer: n})
 }
 
-func (c *Controller) getApiPath(route *net.IPNet) *api.Path {
+func (c *Controller) getApiPath(route *Route) *api.Path {
 	afi := api.Family_AFI_IP
-	if route.IP.To4() == nil {
+	if route.Net.IP.To4() == nil {
 		afi = api.Family_AFI_IP6
 	}
-	prefixlen, _ := route.Mask.Size()
+	prefixlen, _ := route.Net.Mask.Size()
 	nlri, _ := ptypes.MarshalAny(&api.IPAddressPrefix{
-		Prefix:    route.IP.String(),
+		Prefix:    route.Net.IP.String(),
 		PrefixLen: uint32(prefixlen),
 	})
 	a1, _ := ptypes.MarshalAny(&api.OriginAttribute{
@@ -107,7 +112,7 @@ func (c *Controller) getApiPath(route *net.IPNet) *api.Path {
 		NextHop: c.localIP.String(),
 	})
 	var communities []uint32
-	for _, comm := range c.communities {
+	for _, comm := range append(c.communities, route.Communities...) {
 		communities = append(communities, convertCommunity(comm))
 	}
 	a3, _ := ptypes.MarshalAny(&api.CommunitiesAttribute{
@@ -121,7 +126,7 @@ func (c *Controller) getApiPath(route *net.IPNet) *api.Path {
 	}
 }
 
-func (c *Controller) Announce(route *net.IPNet) error {
+func (c *Controller) Announce(route *Route) error {
 	var found bool
 	err := c.s.ListPeer(context.Background(), &api.ListPeerRequest{}, func(p *api.Peer) {
 		if p.Conf.NeighborAddress == c.peerIP.String() {
@@ -140,7 +145,7 @@ func (c *Controller) Announce(route *net.IPNet) error {
 	return err
 }
 
-func (c *Controller) Withdraw(route *net.IPNet) error {
+func (c *Controller) Withdraw(route *Route) error {
 	return c.s.DeletePath(context.Background(), &api.DeletePathRequest{Path: c.getApiPath(route)})
 }
 

@@ -24,4 +24,7 @@ bgp:
 apps:
   - name: app1
     vip: 1.1.1.1/32
+    vip_config:
+      # additional per VIP BGP communities
+      bgp_communities: [ aaaa:bbbb ]
     monitor: port:tcp:5000

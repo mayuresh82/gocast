@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/golang/glog"
+	"github.com/mayuresh82/gocast/config"
 )
 
 type MonitorType int
@@ -50,11 +51,12 @@ func (m Monitors) Contains(elem *Monitor) bool {
 }
 
 type App struct {
-	Name     string
-	Vip      *net.IPNet
-	Monitors Monitors
-	Nats     []string
-	Source   string
+	Name      string
+	Vip       *Route
+	VipConfig config.VipConfig
+	Monitors  Monitors
+	Nats      []string
+	Source    string
 }
 
 func (a *App) Equal(other *App) bool {
@@ -66,10 +68,10 @@ func (a *App) Equal(other *App) bool {
 			return false
 		}
 	}
-	return a.Name == other.Name && a.Vip.String() == other.Vip.String()
+	return a.Name == other.Name && a.Vip.Net.String() == other.Vip.Net.String()
 }
 
-func NewApp(appName, vip string, monitors []string, nats []string, source string) (*App, error) {
+func NewApp(appName, vip string, vipConfig config.VipConfig, monitors []string, nats []string, source string) (*App, error) {
 	if appName == "" {
 		return nil, fmt.Errorf("Invalid app name")
 	}
@@ -78,7 +80,8 @@ func NewApp(appName, vip string, monitors []string, nats []string, source string
 	if err != nil {
 		return nil, fmt.Errorf("Invalid VIP specified, need ip/mask")
 	}
-	app.Vip = ipnet
+	app.Vip = &Route{Net: ipnet, Communities: vipConfig.BgpCommunities}
+	app.VipConfig = vipConfig
 	for _, m := range monitors {
 		// valid monitor formats:
 		// "port:tcp:123" , "exec:/local/check.sh", "consul"

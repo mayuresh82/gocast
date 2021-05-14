@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+	"github.com/mayuresh82/gocast/config"
 )
 
 const (
@@ -85,6 +86,7 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 			monitors []string
 			nats     []string
 		)
+		var vipConf config.VipConfig
 		for _, tag := range service.Tags {
 			// try to find the requires tags. Only vip is mandatory
 			parts := strings.Split(tag, "=")
@@ -94,6 +96,8 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 			switch parts[0] {
 			case "gocast_vip":
 				vip = parts[1]
+			case "gocast_vip_communities":
+				vipConf.BgpCommunities = strings.Split(parts[1], ",")
 			case "gocast_monitor":
 				monitors = append(monitors, parts[1])
 			case "gocast_nat":
@@ -104,7 +108,7 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 			glog.Errorf("No vip Tag found in matched service :%s", service.Service)
 			continue
 		}
-		app, err := NewApp(service.Service, vip, monitors, nats, "consul")
+		app, err := NewApp(service.Service, vip, vipConf, monitors, nats, "consul")
 		if err != nil {
 			glog.Errorf("Unable to add consul app: %v", err)
 			continue
