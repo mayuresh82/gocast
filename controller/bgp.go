@@ -26,6 +26,7 @@ type Controller struct {
 	origin          uint32
 	multiHop        bool
 	s               *gobgp.BgpServer
+	//consul          *ConsulMon
 }
 
 func NewController(config c.BgpConfig) (*Controller, error) {

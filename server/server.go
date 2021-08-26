@@ -53,7 +53,7 @@ func (s *Server) registerHandler(w http.ResponseWriter, r *http.Request) {
 	if vipComm, ok := queries["vip_communities"]; ok {
 		vipConf.BgpCommunities = strings.Split(vipComm[0], ",")
 	}
-	app, err := controller.NewApp(queries["name"][0], queries["vip"][0], vipConf, queries["monitor"], queries["nat"], "http")
+	app, err := controller.NewApp(queries["name"][0], queries["vip"][0], vipConf, queries["monitor"], queries["nat"], "http", "", nil)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
 		return

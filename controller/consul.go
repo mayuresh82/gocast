@@ -1,11 +1,15 @@
 package controller
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,11 +27,28 @@ const (
 )
 
 type Clienter interface {
-	Get(url string) (*http.Response, error)
+	Do(url, method string, body io.Reader) (*http.Response, error)
 }
 
-type Client struct {
+type httpClient struct {
 	*http.Client
+}
+
+func (c *httpClient) Do(url, method string, body io.Reader) (*http.Response, error) {
+	req, _ := http.NewRequest(method, url, body)
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		glog.Errorf("Failed to query : %v", err)
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			body = []byte{}
+		}
+		return nil, fmt.Errorf("Failed to query, Got %v: %v", resp.StatusCode, string(body))
+	}
+	return resp, nil
 }
 
 type ConsulMon struct {
@@ -54,11 +75,16 @@ func contains(inp []string, elem string) bool {
 }
 
 func NewConsulMon(addr string) (*ConsulMon, error) {
+
 	node := os.Getenv(consulNodeEnv)
 	if node == "" {
-		return nil, fmt.Errorf("%s env variable not set", consulNodeEnv)
+		hostname, err := os.Hostname()
+		if err != nil {
+			return nil, fmt.Errorf("%s env variable not set and couldnt fetch hostname", consulNodeEnv)
+		}
+		node = hostname
 	}
-	return &ConsulMon{addr: addr, node: node, client: &http.Client{Timeout: 10 * time.Second}}, nil
+	return &ConsulMon{addr: addr, node: node, client: &httpClient{&http.Client{Timeout: 10 * time.Second}}}, nil
 }
 
 func (c *ConsulMon) queryServices() ([]*App, error) {
@@ -68,7 +94,7 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 		stale = "stale"
 	}
 	addr := c.addr + fmt.Sprintf("%s/%s?%s", nodeURL, c.node, stale)
-	resp, err := c.client.Get(addr)
+	resp, err := c.client.Do(addr, "GET", nil)
 	if err != nil {
 		return apps, err
 	}
@@ -82,10 +108,13 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 			continue
 		}
 		var (
-			vip      string
-			monitors []string
-			nats     []string
+			vip         string
+			monitors    []string
+			nats        []string
+			vipMonitors []string
 		)
+		// VIP (BGP injection service) name defaults to service name with "-vip" appended
+		var vipServiceName = service.Service + "-vip"
 		var vipConf config.VipConfig
 		for _, tag := range service.Tags {
 			// try to find the requires tags. Only vip is mandatory
@@ -102,13 +131,17 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 				monitors = append(monitors, parts[1])
 			case "gocast_nat":
 				nats = append(nats, parts[1])
+			case "gocast_consul_vip_service":
+				vipServiceName = parts[1]
+			case "gocast_consul_vip_check":
+				vipMonitors = append(vipMonitors, parts[1])
 			}
 		}
 		if vip == "" {
 			glog.Errorf("No vip Tag found in matched service :%s", service.Service)
 			continue
 		}
-		app, err := NewApp(service.Service, vip, vipConf, monitors, nats, "consul")
+		app, err := NewApp(service.Service, vip, vipConf, monitors, nats, "consul", vipServiceName, vipMonitors)
 		if err != nil {
 			glog.Errorf("Unable to add consul app: %v", err)
 			continue
@@ -125,7 +158,7 @@ func (c *ConsulMon) healthCheckLocal(service string) (bool, error) {
 	params := url.Values{}
 	params.Add("filter", "enable_gocast in ServiceTags")
 	addr := c.addr + fmt.Sprintf("%s?%s", localHealthCheckurl, params.Encode())
-	resp, err := c.client.Get(addr)
+	resp, err := c.client.Do(addr, "GET", nil)
 	if err != nil {
 		glog.V(2).Infof("Error getting %s with %s", addr, err)
 		return false, err
@@ -153,7 +186,7 @@ func (c *ConsulMon) healthCheckLocal(service string) (bool, error) {
 // This is the underlying api call: https://www.consul.io/api/health.html
 func (c *ConsulMon) healthCheckRemote(service string) (bool, error) {
 	addr := c.addr + fmt.Sprintf("%s/%s", remoteHealthCheckurl, service)
-	resp, err := c.client.Get(addr)
+	resp, err := c.client.Do(addr, "GET", nil)
 	if err != nil {
 		glog.V(2).Infof("Error getting %s with %s", addr, err)
 		return false, err
@@ -185,4 +218,71 @@ func (c *ConsulMon) healthCheck(service string) (bool, error) {
 		return c.healthCheckLocal(service)
 	}
 	return c.healthCheckRemote(service)
+}
+
+func (c *ConsulMon) RegisterVIPServiceCheck(name string, monitors Monitors) {
+	if name == "" || monitors == nil {
+		return
+	}
+
+	var port, interval string
+	// TODO: HTTP health check support. Only TCP health check is used.
+	for _, m := range monitors {
+		switch m.Type.String() {
+		case "port":
+			port = m.Port
+		case "interval":
+			interval = m.Interval
+		}
+	}
+	portInt, err := strconv.Atoi(port)
+	if err != nil {
+		glog.Errorf("Invalid port number")
+		return
+	}
+
+	type Check struct {
+		DeregisterCriticalServiceAfter string `json:"DeregisterCriticalServiceAfter"`
+		TCP                            string `json:"TCP"`
+		Interval                       string `json:"Interval"`
+		Timeout                        string `json:"Timeout"`
+	}
+
+	type Payload struct {
+		ID    string `json:"ID"`
+		Name  string `json:"Name"`
+		Port  int    `json:"Port"`
+		Check Check  `json:"Check"`
+	}
+
+	data := &Payload{
+		ID:   name + "-" + c.node,
+		Name: name,
+		Port: portInt,
+		Check: Check{
+			DeregisterCriticalServiceAfter: "30m",
+			TCP:                            "localhost:" + port,
+			Interval:                       interval,
+			Timeout:                        "2s",
+		},
+	}
+
+	body, _ := json.Marshal(&data)
+	if _, err := c.client.Do("http://127.0.0.1:8500/v1/agent/service/register?replace-existing-checks=true", "PUT", bytes.NewBuffer(body)); err != nil {
+		glog.Errorf("HTTP PUT failed while registering VIP service: %v", err)
+	}
+	glog.V(2).Infof("Registered VIP service check to consul: %s", name+"-"+c.node)
+
+}
+
+func (c *ConsulMon) DeregisterVIPServiceCheck(name string, monitors Monitors) {
+	if name == "" {
+		return
+	}
+	id := name + "-" + c.node
+
+	if _, err := c.client.Do("http://127.0.0.1:8500/v1/agent/service/deregister/"+id, "PUT", nil); err != nil {
+		glog.Errorf("HTTP PUT failed while deregistering VIP service: %v", err)
+	}
+	glog.V(2).Infof("De-registered VIP service check: %s", id)
 }

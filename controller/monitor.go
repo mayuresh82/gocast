@@ -87,6 +87,7 @@ func NewMonitor(config *c.Config) *MonitorMgr {
 		if err != nil {
 			glog.Errorf("Failed to start consul monitor: %v", err)
 		} else {
+			//mon.ctrl.consul = cmon
 			mon.consul = cmon
 			go mon.consulMon()
 		}
@@ -100,7 +101,7 @@ func NewMonitor(config *c.Config) *MonitorMgr {
 	mon.config = config
 	// add apps defined in config
 	for _, a := range config.Apps {
-		app, err := NewApp(a.Name, a.Vip, a.VipConfig, a.Monitors, a.Nats, "config")
+		app, err := NewApp(a.Name, a.Vip, a.VipConfig, a.Monitors, a.Nats, "config", a.VipSvcName, a.VipMonitors)
 		if err != nil {
 			glog.Errorf("Failed to add configured app %s: %v", a.Name, err)
 			continue
@@ -243,6 +244,7 @@ func (m *MonitorMgr) checkCond(am *appMon) error {
 			if err := m.ctrl.Announce(app.Vip); err != nil {
 				return fmt.Errorf("Failed to announce route: %v", err)
 			}
+			m.consul.RegisterVIPServiceCheck(app.VipSvcName, app.VipMonitors)
 			am.announced = true
 			if exit, ok := m.cleanups[app.Name]; ok {
 				exit <- true
@@ -253,6 +255,7 @@ func (m *MonitorMgr) checkCond(am *appMon) error {
 			if err := m.ctrl.Withdraw(app.Vip); err != nil {
 				return fmt.Errorf("Failed to withdraw route: %v", err)
 			}
+			m.consul.DeregisterVIPServiceCheck(app.VipSvcName, app.VipMonitors)
 			am.announced = false
 			exit := make(chan bool)
 			go m.Cleanup(app.Name, exit)
@@ -294,6 +297,7 @@ func (m *MonitorMgr) CloseAll() {
 		if am.checkOn {
 			am.done <- true
 		}
+		m.consul.DeregisterVIPServiceCheck(am.app.VipSvcName, am.app.VipMonitors)
 		deleteLoopback(am.app.Vip.Net)
 		for _, nat := range am.app.Nats {
 			parts := strings.Split(nat, ":")
