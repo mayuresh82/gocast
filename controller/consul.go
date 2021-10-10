@@ -220,13 +220,15 @@ func (c *ConsulMon) healthCheck(service string) (bool, error) {
 	return c.healthCheckRemote(service)
 }
 
+// Register health check after BRP announce
 func (c *ConsulMon) RegisterVIPServiceCheck(name string, monitors Monitors) {
 	if name == "" || monitors == nil {
+		glog.Errorf("Invalid name or monitors")
 		return
 	}
 
 	var port, interval string
-	// TODO: HTTP health check support. Only TCP health check is used.
+	// TCP health check is supported. TBD: HTTP health check if needed.
 	for _, m := range monitors {
 		switch m.Type.String() {
 		case "port":
@@ -247,7 +249,6 @@ func (c *ConsulMon) RegisterVIPServiceCheck(name string, monitors Monitors) {
 		Interval                       string `json:"Interval"`
 		Timeout                        string `json:"Timeout"`
 	}
-
 	type Payload struct {
 		ID    string `json:"ID"`
 		Name  string `json:"Name"`
@@ -260,7 +261,7 @@ func (c *ConsulMon) RegisterVIPServiceCheck(name string, monitors Monitors) {
 		Name: name,
 		Port: portInt,
 		Check: Check{
-			DeregisterCriticalServiceAfter: "30m",
+			DeregisterCriticalServiceAfter: "10m",
 			TCP:                            "localhost:" + port,
 			Interval:                       interval,
 			Timeout:                        "2s",
@@ -275,14 +276,43 @@ func (c *ConsulMon) RegisterVIPServiceCheck(name string, monitors Monitors) {
 
 }
 
+// Deregister health check before BRP withdraw
 func (c *ConsulMon) DeregisterVIPServiceCheck(name string, monitors Monitors) {
 	if name == "" {
+		glog.Errorf("Invalid name or monitors")
 		return
 	}
-	id := name + "-" + c.node
 
-	if _, err := c.client.Do("http://127.0.0.1:8500/v1/agent/service/deregister/"+id, "PUT", nil); err != nil {
+	// Service Deregister
+	svcId := name + "-" + c.node
+	glog.V(4).Infof("Service Dreg URL: http://127.0.0.1:8500/v1/agent/service/deregister/%s", svcId)
+	if _, err := c.client.Do("http://127.0.0.1:8500/v1/agent/service/deregister/"+svcId, "PUT", nil); err != nil {
 		glog.Errorf("HTTP PUT failed while deregistering VIP service: %v", err)
+
+		glog.V(4).Infof("Retry Service Dreg URL: http://127.0.0.1:8500/v1/agent/service/deregister/service:%s", svcId)
+		if _, err := c.client.Do("http://127.0.0.1:8500/v1/agent/service/deregister/service:"+svcId, "PUT", nil); err != nil {
+			glog.Errorf("HTTP PUT failed while retry deregistering VIP service: %v", err)
+		} else {
+			glog.V(2).Infof("Retry De-registered VIP service check: %s", svcId)
+		}
+	} else {
+		glog.V(2).Infof("De-registered VIP service check: %s", svcId)
 	}
-	glog.V(2).Infof("De-registered VIP service check: %s", id)
+
+	// Catalog Deregister
+	type Payload struct {
+		Node      string `json:"Node"`
+		ServiceID string `json:"ServiceID"`
+	}
+	data := &Payload{
+		Node:      c.node,
+		ServiceID: svcId,
+	}
+	body, _ := json.Marshal(&data)
+	glog.V(4).Infof("Catalog Dreg URL: http://127.0.0.1:8500/v1/catalog/deregister, Body: %v", bytes.NewBuffer(body))
+	if _, err := c.client.Do("http://127.0.0.1:8500/v1/catalog/deregister", "PUT", bytes.NewBuffer(body)); err != nil {
+		glog.Errorf("HTTP PUT failed during catalog deregister VIP service: %v", err)
+	} else {
+		glog.V(2).Infof("Catalog De-registered VIP service check: %s", svcId)
+	}
 }

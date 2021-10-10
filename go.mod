@@ -5,7 +5,6 @@ go 1.12
 require (
 	github.com/armon/go-radix v1.0.0 // indirect
 	github.com/dgryski/go-farm v0.0.0-20180109070241-2de33835d102 // indirect
-	github.com/eapache/channels v1.1.0 // indirect
 	github.com/eapache/queue v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.4.7 // indirect
 	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b
@@ -13,7 +12,6 @@ require (
 	github.com/golang/protobuf v1.4.1
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/influxdata/influxdb v1.6.4 // indirect
-	github.com/kisielk/gotool v1.0.0 // indirect
 	github.com/konsorten/go-windows-terminal-sequences v1.0.1 // indirect
 	github.com/magiconair/properties v1.8.0 // indirect
 	github.com/mitchellh/mapstructure v1.1.2 // indirect
@@ -29,9 +27,6 @@ require (
 	github.com/stretchr/testify v1.3.0
 	github.com/vishvananda/netlink v0.0.0-20181018205019-d3a23fd178f1 // indirect
 	github.com/vishvananda/netns v0.0.0-20180720170159-13995c7128cc // indirect
-	golang.org/x/text v0.3.0 // indirect
-	google.golang.org/genproto v0.0.0-20200526211855-cb27e3aa2013 // indirect
-	google.golang.org/grpc v1.27.0 // indirect
 	google.golang.org/protobuf v1.25.0 // indirect
 	gopkg.in/tomb.v2 v2.0.0-20161208151619-d5d1b5820637 // indirect
 	gopkg.in/yaml.v2 v2.2.1
