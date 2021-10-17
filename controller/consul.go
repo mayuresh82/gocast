@@ -108,12 +108,13 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 			continue
 		}
 		var (
-			vip         string
-			monitors    []string
-			nats        []string
-			vipMonitors []string
+			vip      string
+			monitors []string
+			nats     []string
+			//vipMonitors []string
+			vipChecks []string
 		)
-		// VIP (BGP injection service) name defaults to service name with "-vip" appended
+		// VIP (BGP announce service) name defaults to service name with "-vip" appended
 		var vipServiceName = service.Service + "-vip"
 		var vipConf config.VipConfig
 		for _, tag := range service.Tags {
@@ -134,14 +135,15 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 			case "gocast_consul_vip_service":
 				vipServiceName = parts[1]
 			case "gocast_consul_vip_check":
-				vipMonitors = append(vipMonitors, parts[1])
+				//vipMonitors = append(vipMonitors, parts[1])
+				vipChecks = append(vipChecks, parts[1])
 			}
 		}
 		if vip == "" {
 			glog.Errorf("No vip Tag found in matched service :%s", service.Service)
 			continue
 		}
-		app, err := NewApp(service.Service, vip, vipConf, monitors, nats, "consul", vipServiceName, vipMonitors)
+		app, err := NewApp(service.Service, vip, vipConf, monitors, nats, "consul", vipServiceName, vipChecks)
 		if err != nil {
 			glog.Errorf("Unable to add consul app: %v", err)
 			continue
@@ -220,28 +222,29 @@ func (c *ConsulMon) healthCheck(service string) (bool, error) {
 	return c.healthCheckRemote(service)
 }
 
-// Register health check after BRP announce
-func (c *ConsulMon) RegisterVIPServiceCheck(name string, monitors Monitors) {
-	if name == "" || monitors == nil {
-		glog.Errorf("Invalid name or monitors")
+// Register new vip health check after BRP announce
+func (c *ConsulMon) RegisterVIPServiceCheck(name string, checks map[string]string) {
+	if name == "" || checks == nil || len(checks) == 0 {
+		glog.Info("No vip service check to be added")
 		return
 	}
 
-	var port, interval string
-	// TCP health check is supported. TBD: HTTP health check if needed.
-	for _, m := range monitors {
-		switch m.Type.String() {
-		case "port":
-			port = m.Port
-		case "interval":
-			interval = m.Interval
-		}
-	}
-	portInt, err := strconv.Atoi(port)
-	if err != nil {
-		glog.Errorf("Invalid port number")
+	// Only TCP health check is supported. HTTP health check TBD if needed.
+	if protocol, ok := checks["protocol"]; !ok || protocol != "tcp" {
+		glog.Errorf("Invalid check protocol. Only TCP supported")
 		return
 	}
+
+	// Use following as the default interval & timeout if not specified
+	interval := "15s"
+	timeout := "2s"
+	if val, ok := checks["interval"]; ok {
+		interval = val
+	}
+	if val, ok := checks["timeout"]; ok {
+		timeout = val
+	}
+	portInt, _ := strconv.Atoi(checks["port"])
 
 	type Check struct {
 		DeregisterCriticalServiceAfter string `json:"DeregisterCriticalServiceAfter"`
@@ -262,9 +265,9 @@ func (c *ConsulMon) RegisterVIPServiceCheck(name string, monitors Monitors) {
 		Port: portInt,
 		Check: Check{
 			DeregisterCriticalServiceAfter: "10m",
-			TCP:                            "localhost:" + port,
+			TCP:                            "localhost:" + checks["port"],
 			Interval:                       interval,
-			Timeout:                        "2s",
+			Timeout:                        timeout,
 		},
 	}
 
@@ -276,10 +279,10 @@ func (c *ConsulMon) RegisterVIPServiceCheck(name string, monitors Monitors) {
 
 }
 
-// Deregister health check before BRP withdraw
-func (c *ConsulMon) DeregisterVIPServiceCheck(name string, monitors Monitors) {
-	if name == "" {
-		glog.Errorf("Invalid name or monitors")
+// Deregister vip health check before BGP withdraw
+func (c *ConsulMon) DeregisterVIPServiceCheck(name string, checks map[string]string) {
+	if name == "" || checks == nil || len(checks) == 0 {
+		glog.Infof("No vip service check to be removed")
 		return
 	}
 
@@ -288,13 +291,6 @@ func (c *ConsulMon) DeregisterVIPServiceCheck(name string, monitors Monitors) {
 	glog.V(4).Infof("Service Dreg URL: http://127.0.0.1:8500/v1/agent/service/deregister/%s", svcId)
 	if _, err := c.client.Do("http://127.0.0.1:8500/v1/agent/service/deregister/"+svcId, "PUT", nil); err != nil {
 		glog.Errorf("HTTP PUT failed while deregistering VIP service: %v", err)
-
-		glog.V(4).Infof("Retry Service Dreg URL: http://127.0.0.1:8500/v1/agent/service/deregister/service:%s", svcId)
-		if _, err := c.client.Do("http://127.0.0.1:8500/v1/agent/service/deregister/service:"+svcId, "PUT", nil); err != nil {
-			glog.Errorf("HTTP PUT failed while retry deregistering VIP service: %v", err)
-		} else {
-			glog.V(2).Infof("Retry De-registered VIP service check: %s", svcId)
-		}
 	} else {
 		glog.V(2).Infof("De-registered VIP service check: %s", svcId)
 	}

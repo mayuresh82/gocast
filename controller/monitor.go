@@ -101,7 +101,7 @@ func NewMonitor(config *c.Config) *MonitorMgr {
 	mon.config = config
 	// add apps defined in config
 	for _, a := range config.Apps {
-		app, err := NewApp(a.Name, a.Vip, a.VipConfig, a.Monitors, a.Nats, "config", a.VipSvcName, a.VipMonitors)
+		app, err := NewApp(a.Name, a.Vip, a.VipConfig, a.Monitors, a.Nats, "config", a.VipSvcName, a.VipChecks)
 		if err != nil {
 			glog.Errorf("Failed to add configured app %s: %v", a.Name, err)
 			continue
@@ -180,12 +180,12 @@ func (m *MonitorMgr) Remove(appName string) {
 			a.done <- true
 		}
 		if a.announced {
-			if err := m.ctrl.Withdraw(a.app.Vip); err != nil {
+			if err := m.deregisterVIPServiceAndWithdrawRoute(a.app); err != nil {
 				glog.Errorf("Failed to withdraw route: %v", err)
 			}
 		}
 		if err := deleteLoopback(a.app.Vip.Net); err != nil {
-			glog.Errorf("Failed to remove app: %s: %v", a.app.Name, err)
+			glog.Errorf("Failed to delete loopback, removing app: %s: %v", a.app.Name, err)
 		}
 		for _, nat := range a.app.Nats {
 			parts := strings.Split(nat, ":")
@@ -199,6 +199,28 @@ func (m *MonitorMgr) Remove(appName string) {
 	}
 	delete(m.monitors, appName)
 }
+
+// Wrapper function to announce route and then register consul vip service health check
+func (m *MonitorMgr) announceRouteAndRegisterVIPService(app *App) error {
+
+	if err := m.ctrl.Announce(app.Vip); err != nil {
+		return fmt.Errorf("Annouce failed: %v", err)
+	}
+	glog.V(2).Infof("Announced route for %v app %s", app.Vip.Net.String(), app.Name)
+	m.consul.RegisterVIPServiceCheck(app.VipSvcName, app.VipChecks)
+	return nil
+}
+
+// Wrapper function to delete consul vip service check if it exists and then withdraw route
+func (m *MonitorMgr) deregisterVIPServiceAndWithdrawRoute(app *App) error {
+	m.consul.DeregisterVIPServiceCheck(app.VipSvcName, app.VipChecks)
+	if err := m.ctrl.Withdraw(app.Vip); err != nil {
+		return fmt.Errorf("Withdraw failed: %v", err)
+	}
+	glog.V(2).Infof("Withdrew route for %v app %s", app.Vip.Net.String(), app.Name)
+	return nil
+}
+
 func (m *MonitorMgr) runMonitors(app *App) bool {
 	for _, mon := range app.Monitors {
 		var check bool
@@ -241,10 +263,9 @@ func (m *MonitorMgr) checkCond(am *appMon) error {
 					return err
 				}
 			}
-			if err := m.ctrl.Announce(app.Vip); err != nil {
+			if err := m.announceRouteAndRegisterVIPService(app); err != nil {
 				return fmt.Errorf("Failed to announce route: %v", err)
 			}
-			m.consul.RegisterVIPServiceCheck(app.VipSvcName, app.VipMonitors)
 			am.announced = true
 			if exit, ok := m.cleanups[app.Name]; ok {
 				exit <- true
@@ -252,10 +273,12 @@ func (m *MonitorMgr) checkCond(am *appMon) error {
 		}
 	} else {
 		if am.announced {
-			if err := m.ctrl.Withdraw(app.Vip); err != nil {
+			if err := m.deregisterVIPServiceAndWithdrawRoute(app); err != nil {
 				return fmt.Errorf("Failed to withdraw route: %v", err)
 			}
-			m.consul.DeregisterVIPServiceCheck(app.VipSvcName, app.VipMonitors)
+			if err := deleteLoopback(app.Vip.Net); err != nil {
+				glog.Errorf("Failed to remove loopback for app: %s: %v", app.Name, err)
+			}
 			am.announced = false
 			exit := make(chan bool)
 			go m.Cleanup(app.Name, exit)
@@ -297,7 +320,7 @@ func (m *MonitorMgr) CloseAll() {
 		if am.checkOn {
 			am.done <- true
 		}
-		m.consul.DeregisterVIPServiceCheck(am.app.VipSvcName, am.app.VipMonitors)
+		m.consul.DeregisterVIPServiceCheck(am.app.VipSvcName, am.app.VipChecks)
 		deleteLoopback(am.app.Vip.Net)
 		for _, nat := range am.app.Nats {
 			parts := strings.Split(nat, ":")
