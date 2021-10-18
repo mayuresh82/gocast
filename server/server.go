@@ -68,9 +68,7 @@ func (s *Server) unregisterHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request, need app name specified", http.StatusBadRequest)
 		return
 	}
-	s.mon.Lock()
 	s.mon.Remove(appName[0])
-	s.mon.Unlock()
 }
 
 func (s *Server) infoHandler(w http.ResponseWriter, r *http.Request) {
