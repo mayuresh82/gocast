@@ -119,12 +119,15 @@ func (m *MonitorMgr) consulMon() {
 		if err != nil {
 			glog.Errorf("Failed to query consul: %v", err)
 		} else {
+			glog.V(2).Infof("consulMon: Got %v apps from consul.queryServices()", len(apps))
 			for _, app := range apps {
+				glog.V(2).Infof("consulMon: Adding %v app, vip %s", app.Name, app.Vip.Net.String())
 				m.Add(app)
 			}
 			// remove currently running apps that are not discovered in this pass
 			var toRemove []string
 			m.Lock()
+			glog.V(2).Infof("consulMon: currently have %v monitors", len(m.monitors))
 			for name, mon := range m.monitors {
 				if mon.app.Source != "consul" {
 					continue
@@ -198,6 +201,7 @@ func (m *MonitorMgr) Remove(appName string) {
 		}
 	}
 	delete(m.monitors, appName)
+	glog.V(2).Infof("Completed removing app %v. Num of moniters left %v", appName, len(m.monitors))
 }
 
 // Wrapper function to announce route and then register consul vip service health check
@@ -249,7 +253,7 @@ func (m *MonitorMgr) checkCond(am *appMon) error {
 	m.Lock()
 	defer m.Unlock()
 	if m.runMonitors(app) {
-		glog.V(2).Infof("All Monitors for app: %s succeeded", app.Name)
+		glog.V(4).Infof("All Monitors for app: %s succeeded", app.Name)
 		if !am.announced {
 			if err := addLoopback(app.Name, app.Vip.Net); err != nil {
 				return err
@@ -272,6 +276,7 @@ func (m *MonitorMgr) checkCond(am *appMon) error {
 			}
 		}
 	} else {
+		glog.V(2).Infof("Monitors failed for app: %s announced: %v", app.Name, am.announced)
 		if am.announced {
 			if err := m.deregisterVIPServiceAndWithdrawRoute(app); err != nil {
 				return fmt.Errorf("Failed to withdraw route: %v", err)

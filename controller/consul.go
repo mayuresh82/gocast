@@ -103,15 +103,16 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&consulData); err != nil {
 		return apps, fmt.Errorf("Unable to decode consul data: %v", err)
 	}
+	glog.V(2).Infof("queryServices: Got %v services", len(consulData.Services))
 	for _, service := range consulData.Services {
 		if !contains(service.Tags, matchTag) {
 			continue
 		}
+		glog.V(2).Infof("queryServices: service %v id %v tags %v", service.Service, service.Service, service.Tags)
 		var (
-			vip      string
-			monitors []string
-			nats     []string
-			//vipMonitors []string
+			vip       string
+			monitors  []string
+			nats      []string
 			vipChecks []string
 		)
 		// VIP (BGP announce service) name defaults to service name with "-vip" appended
@@ -135,7 +136,6 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 			case "gocast_consul_vip_service":
 				vipServiceName = parts[1]
 			case "gocast_consul_vip_check":
-				//vipMonitors = append(vipMonitors, parts[1])
 				vipChecks = append(vipChecks, parts[1])
 			}
 		}

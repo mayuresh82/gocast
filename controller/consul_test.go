@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"testing"
@@ -87,14 +88,26 @@ func (c *MockClient) Get(url string) (*http.Response, error) {
 	return nil, nil
 }
 
+type MockClienter struct {
+}
+
+func (c *MockClienter) Do(url, method string, req *http.Request) (*http.Response, error) {
+	return &http.Response{}, nil
+}
+
 func TestQueryServices(t *testing.T) {
 	a := assert.New(t)
 	client := &MockClient{}
+	clientnew := &MockClienter{}
 	cm := &ConsulMon{
-		addr: "foo", node: "test", client: client,
+		addr: "foo", node: "test", client: clientnew,
 	}
 
 	// test valid app
+	cm.clientnew.Do(string, string, io.Reader)(*http.Response, error) = func(string, string, io.Reader) (*http.Response, error) {
+		b := bytes.NewBuffer([]byte(mockConsulData["single-app"]))
+		return &http.Response{Body: ioutil.NopCloser(b), StatusCode: http.StatusOK}, nil
+	}
 	client.get = func(url string) (*http.Response, error) {
 		b := bytes.NewBuffer([]byte(mockConsulData["single-app"]))
 		return &http.Response{Body: ioutil.NopCloser(b), StatusCode: http.StatusOK}, nil
