@@ -87,7 +87,6 @@ func NewMonitor(config *c.Config) *MonitorMgr {
 		if err != nil {
 			glog.Errorf("Failed to start consul monitor: %v", err)
 		} else {
-			//mon.ctrl.consul = cmon
 			mon.consul = cmon
 			go mon.consulMon()
 		}

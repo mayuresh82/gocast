@@ -222,7 +222,7 @@ func (c *ConsulMon) healthCheck(service string) (bool, error) {
 	return c.healthCheckRemote(service)
 }
 
-// Register new vip health check after BRP announce
+// Register new vip health check after BGP announce
 func (c *ConsulMon) RegisterVIPServiceCheck(name string, checks map[string]string) {
 	if name == "" || checks == nil || len(checks) == 0 {
 		glog.Info("No vip service check to be added")

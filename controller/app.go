@@ -35,7 +35,6 @@ type Monitor struct {
 	Port     string
 	Protocol string
 	Cmd      string
-	Interval string
 }
 
 func (m *Monitor) Equal(other *Monitor) bool {
