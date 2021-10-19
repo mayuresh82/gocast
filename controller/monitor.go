@@ -157,10 +157,12 @@ func (m *MonitorMgr) Add(app *App) {
 	for _, appMon := range m.monitors {
 		if appMon.app.Equal(app) && appMon.checkOn {
 			glog.V(2).Infof("App %s already exists", app.Name)
+			m.monMu.Unlock()
 			return
 		}
 		if appMon.app.Vip.Net.String() == app.Vip.Net.String() && appMon.app.Name != app.Name {
 			glog.Errorf("Error: Vip %s is already being announced by app: %s", app.Vip.Net.String(), appMon.app.Name)
+			m.monMu.Unlock()
 			return
 		}
 	}
