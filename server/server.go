@@ -30,6 +30,7 @@ func (s *Server) Serve(ctx context.Context) {
 	http.HandleFunc("/register", s.registerHandler)
 	http.HandleFunc("/unregister", s.unregisterHandler)
 	http.HandleFunc("/info", s.infoHandler)
+	http.HandleFunc("/ping", s.pingHandler)
 	srv := &http.Server{Addr: s.ListenAddr}
 	idleConnsClosed := make(chan struct{})
 	go func() {
@@ -81,4 +82,15 @@ func (s *Server) infoHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(peer)
+}
+
+func (s *Server) pingHandler(w http.ResponseWriter, r *http.Request) {
+	s.mon.Health <- struct{}{}
+	for {
+		select {
+		case <-s.mon.Health:
+			fmt.Fprintf(w, "I-AM-ALIVE\n")
+			return
+		}
+	}
 }

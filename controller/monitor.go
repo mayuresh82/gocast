@@ -68,6 +68,7 @@ type MonitorMgr struct {
 	config   *c.Config
 	ctrl     *Controller
 	consul   *ConsulMon
+	Health   chan struct{}
 
 	sync.Mutex
 }
@@ -81,6 +82,7 @@ func NewMonitor(config *c.Config) *MonitorMgr {
 		ctrl:     ctrl,
 		monitors: make(map[string]*appMon),
 		cleanups: make(map[string]chan bool),
+		Health:   make(chan struct{}),
 	}
 	if config.Agent.ConsulAddr != "" {
 		cmon, err := NewConsulMon(config.Agent.ConsulAddr)
@@ -88,7 +90,7 @@ func NewMonitor(config *c.Config) *MonitorMgr {
 			glog.Errorf("Failed to start consul monitor: %v", err)
 		} else {
 			mon.consul = cmon
-			go mon.consulMon()
+			go mon.consulMonLoop()
 		}
 	}
 	if config.Agent.MonitorInterval == 0 {
@@ -110,45 +112,57 @@ func NewMonitor(config *c.Config) *MonitorMgr {
 	return mon
 }
 
+func (m *MonitorMgr) consulMonLoop() {
+	t := time.NewTicker(m.config.Agent.ConsulQueryInterval)
+	defer t.Stop()
+	// Query consul once right away before we get into the loop
+	m.consulMon()
+	for {
+		select {
+		case <-m.Health:
+			m.Health <- struct{}{}
+		case <-t.C:
+			m.consulMon()
+		}
+	}
+}
+
 // consulMon periodically queries consul for apps that need to be
 // registered and adds them to the monitor manager
 func (m *MonitorMgr) consulMon() {
-	for {
-		apps, err := m.consul.queryServices()
-		if err != nil {
-			glog.Errorf("Failed to query consul: %v", err)
-		} else {
-			glog.V(2).Infof("consulMon: Got %v apps from consul.queryServices()", len(apps))
-			for _, app := range apps {
-				glog.V(2).Infof("consulMon: Adding %v app, vip %s", app.Name, app.Vip.Net.String())
-				m.Add(app)
-			}
-			// remove currently running apps that are not discovered in this pass
-			var toRemove []string
-			m.Lock()
-			glog.V(2).Infof("consulMon: currently have %v monitors", len(m.monitors))
-			for name, mon := range m.monitors {
-				if mon.app.Source != "consul" {
-					continue
-				}
-				var found bool
-				for _, app := range apps {
-					if name == app.Name {
-						found = true
-						break
-					}
-				}
-				if !found {
-					glog.V(2).Infof("Removing app: %s as it was not found in consul", name)
-					toRemove = append(toRemove, name)
-				}
-			}
-			for _, tr := range toRemove {
-				m.Remove(tr)
-			}
-			m.Unlock()
+	apps, err := m.consul.queryServices()
+	if err != nil {
+		glog.Errorf("Failed to query consul: %v", err)
+	} else {
+		glog.V(2).Infof("consulMon: Got %v apps from consul.queryServices()", len(apps))
+		for _, app := range apps {
+			glog.V(2).Infof("consulMon: Adding %v app, vip %s", app.Name, app.Vip.Net.String())
+			m.Add(app)
 		}
-		<-time.After(m.config.Agent.ConsulQueryInterval)
+		// remove currently running apps that are not discovered in this pass
+		var toRemove []string
+		m.Lock()
+		glog.V(2).Infof("consulMon: currently have %v monitors", len(m.monitors))
+		for name, mon := range m.monitors {
+			if mon.app.Source != "consul" {
+				continue
+			}
+			var found bool
+			for _, app := range apps {
+				if name == app.Name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				glog.V(2).Infof("Removing app: %s as it was not found in consul", name)
+				toRemove = append(toRemove, name)
+			}
+		}
+		for _, tr := range toRemove {
+			m.Remove(tr)
+		}
+		m.Unlock()
 	}
 }
 
