@@ -134,6 +134,10 @@ func (m *MonitorMgr) consulMon() {
 	if err != nil {
 		glog.Errorf("Failed to query consul: %v", err)
 	} else {
+		if len(apps) == 0 {
+			glog.Warning("consul.queryServices() got 0 services .. skipping clean up of apps")
+			return
+		}
 		glog.V(2).Infof("consulMon: Got %v apps from consul.queryServices()", len(apps))
 		for _, app := range apps {
 			glog.V(2).Infof("consulMon: Adding %v app, vip %s", app.Name, app.Vip.Net.String())
@@ -212,9 +216,9 @@ func (m *MonitorMgr) Remove(appName string) {
 				glog.Errorf("Failed to remove app: %s: %v", a.app.Name, err)
 			}
 		}
+		glog.V(2).Infof("Completed removing app %v. Num of moniters left %v", appName, len(m.monitors)-1)
 	}
 	delete(m.monitors, appName)
-	glog.V(2).Infof("Completed removing app %v. Num of moniters left %v", appName, len(m.monitors))
 }
 
 // Wrapper function to announce route and then register consul vip service health check

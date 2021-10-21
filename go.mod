@@ -9,7 +9,8 @@ require (
 	github.com/fsnotify/fsnotify v1.4.7 // indirect
 	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b
 	github.com/golang/lint v0.0.0-20180702182130-06c8688daad7 // indirect
-	github.com/golang/protobuf v1.4.1
+	github.com/golang/mock v1.1.1 // indirect
+	github.com/golang/protobuf v1.5.2
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/influxdata/influxdb v1.6.4 // indirect
 	github.com/konsorten/go-windows-terminal-sequences v1.0.1 // indirect
@@ -24,10 +25,12 @@ require (
 	github.com/spf13/jwalterweatherman v1.0.0 // indirect
 	github.com/spf13/pflag v1.0.3 // indirect
 	github.com/stretchr/objx v0.3.0 // indirect
-	github.com/stretchr/testify v1.3.0
+	github.com/stretchr/testify v1.5.1
 	github.com/vishvananda/netlink v0.0.0-20181018205019-d3a23fd178f1 // indirect
 	github.com/vishvananda/netns v0.0.0-20180720170159-13995c7128cc // indirect
-	google.golang.org/protobuf v1.25.0 // indirect
+	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9 // indirect
+	golang.org/x/lint v0.0.0-20190313153728-d0100b6bd8b3 // indirect
+	google.golang.org/genproto v0.0.0-20211020151524-b7c3a969101a // indirect
 	gopkg.in/tomb.v2 v2.0.0-20161208151619-d5d1b5820637 // indirect
-	gopkg.in/yaml.v2 v2.2.1
+	gopkg.in/yaml.v2 v2.2.3
 )
