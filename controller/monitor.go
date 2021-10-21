@@ -164,7 +164,7 @@ func (m *MonitorMgr) consulMon() {
 				toRemove = append(toRemove, name)
 			}
 		}
-    m.monMu.Unlock()  
+		m.monMu.Unlock()
 		for _, tr := range toRemove {
 			m.Remove(tr)
 		}
