@@ -70,7 +70,8 @@ type MonitorMgr struct {
 	consul   *ConsulMon
 	Health   chan struct{}
 
-	sync.Mutex
+	monMu sync.Mutex
+	clMu  sync.Mutex
 }
 
 func NewMonitor(config *c.Config) *MonitorMgr {
@@ -145,7 +146,7 @@ func (m *MonitorMgr) consulMon() {
 		}
 		// remove currently running apps that are not discovered in this pass
 		var toRemove []string
-		m.Lock()
+		m.monMu.Lock()
 		glog.V(2).Infof("consulMon: currently have %v monitors", len(m.monitors))
 		for name, mon := range m.monitors {
 			if mon.app.Source != "consul" {
@@ -163,28 +164,30 @@ func (m *MonitorMgr) consulMon() {
 				toRemove = append(toRemove, name)
 			}
 		}
+    m.monMu.Unlock()  
 		for _, tr := range toRemove {
 			m.Remove(tr)
 		}
-		m.Unlock()
 	}
 }
 
 // Add adds a new app into monitor manager
 func (m *MonitorMgr) Add(app *App) {
 	// check if already running
-	m.Lock()
-	defer m.Unlock()
+	m.monMu.Lock()
 	for _, appMon := range m.monitors {
 		if appMon.app.Equal(app) && appMon.checkOn {
 			glog.V(2).Infof("App %s already exists", app.Name)
+			m.monMu.Unlock()
 			return
 		}
 		if appMon.app.Vip.Net.String() == app.Vip.Net.String() && appMon.app.Name != app.Name {
 			glog.Errorf("Error: Vip %s is already being announced by app: %s", app.Vip.Net.String(), appMon.app.Name)
+			m.monMu.Unlock()
 			return
 		}
 	}
+	m.monMu.Unlock()
 	m.Remove(app.Name)
 	appMon := &appMon{app: app, done: make(chan bool)}
 	m.monitors[app.Name] = appMon
@@ -195,6 +198,8 @@ func (m *MonitorMgr) Add(app *App) {
 // Remove removes an app from monitor manager, stops BGP
 /// announcement and cleans up state
 func (m *MonitorMgr) Remove(appName string) {
+	m.monMu.Lock()
+	defer m.monMu.Unlock()
 	if a, ok := m.monitors[appName]; ok {
 		if a.checkOn {
 			a.done <- true
@@ -267,8 +272,8 @@ func (m *MonitorMgr) runMonitors(app *App) bool {
 
 func (m *MonitorMgr) checkCond(am *appMon) error {
 	app := am.app
-	m.Lock()
-	defer m.Unlock()
+	m.clMu.Lock()
+	defer m.clMu.Unlock()
 	if m.runMonitors(app) {
 		glog.V(4).Infof("All Monitors for app: %s succeeded", app.Name)
 		if !am.announced {
@@ -290,6 +295,7 @@ func (m *MonitorMgr) checkCond(am *appMon) error {
 			am.announced = true
 			if exit, ok := m.cleanups[app.Name]; ok {
 				exit <- true
+				delete(m.cleanups, app.Name)
 			}
 		}
 	} else {
@@ -362,9 +368,7 @@ func (m *MonitorMgr) Cleanup(app string, exit chan bool) {
 		select {
 		case <-t.C:
 			glog.Infof("Cleaning up app %s", app)
-			m.Lock()
 			m.Remove(app)
-			m.Unlock()
 		case <-exit:
 			return
 		}
