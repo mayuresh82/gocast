@@ -52,15 +52,22 @@ func (m Monitors) Contains(elem *Monitor) bool {
 	return false
 }
 
+type VipConsulChecks struct {
+	Protocol string // only 'tcp` check is currently supported
+	Port     string
+	Interval string
+	Timeout  string
+}
+
 type App struct {
-	Name       string
-	Vip        *Route
-	VipConfig  config.VipConfig
-	Monitors   Monitors
-	Nats       []string
-	Source     string
-	VipSvcName string
-	VipChecks  map[string]string
+	Name             string
+	Vip              *Route
+	VipConfig        config.VipConfig
+	Monitors         Monitors
+	Nats             []string
+	Source           string
+	VipConsulSvcName string
+	VipConsulChecks  []VipConsulChecks
 }
 
 func (a *App) Equal(other *App) bool {
@@ -80,58 +87,66 @@ func (a *App) String() string {
 		a.Name, a.Vip.Net.String(), a.VipConfig, a.Monitors, a.Nats, a.Source)
 }
 
-func parseVipChecks(checks []string) (map[string]string, error) {
-	checkMap := make(map[string]string)
-	for _, m := range checks {
-		// valid monitor formats:
-		// "port:tcp:123" , "interval:10s", "timeout:2s"
-		parts := strings.Split(m, ":")
-		switch parts[0] {
-		case "port":
-			if len(parts) != 3 || parts[1] != "tcp" { // TBD: HTTP health check currently not supported
-				return nil, fmt.Errorf("Invalid port vip check, must specify proto:port")
+func parseVipChecks(vipchecks []string) ([]VipConsulChecks, error) {
+	var consulCheckList []VipConsulChecks
+	for _, m := range vipchecks {
+		// valid vip consul check format:
+		// "port:tcp:123,interval:10s,timeout:2s"
+		checks := strings.Split(m, ",")
+		var newCheck VipConsulChecks
+		// Use following as the default interval & timeout if not specified
+		newCheck.Interval = "15s"
+		newCheck.Timeout = "2s"
+		for _, check := range checks {
+			parts := strings.Split(check, ":")
+			switch parts[0] {
+			case "port":
+				if len(parts) != 3 || parts[1] != "tcp" { // TBD: HTTP health check currently not supported
+					return nil, fmt.Errorf("Invalid port vip check, must specify proto:port")
+				}
+				newCheck.Protocol = parts[1]
+				portInt, err := strconv.Atoi(parts[2])
+				if err != nil || portInt < 1 || portInt > 0xFFFF {
+					return nil, fmt.Errorf("Invalid port number")
+				}
+				newCheck.Port = parts[2]
+			case "interval":
+				if len(parts) != 2 {
+					return nil, fmt.Errorf("Invalid vip check interval format, must specify interval:duration")
+				}
+				if _, err := time.ParseDuration(parts[1]); err != nil {
+					return nil, fmt.Errorf("Invalid interval value")
+				}
+				newCheck.Interval = parts[1]
+			case "timeout":
+				if len(parts) != 2 {
+					return nil, fmt.Errorf("Invalid vip check timeout format, must specify timeout:duration")
+				}
+				if _, err := time.ParseDuration(parts[1]); err != nil {
+					return nil, fmt.Errorf("Invalid timeout value")
+				}
+				newCheck.Timeout = parts[1]
+			default:
+				glog.V(2).Infof("Invalid vip check specified")
 			}
-			checkMap["protocol"] = parts[1]
-			portInt, err := strconv.Atoi(parts[2])
-			if err != nil || portInt < 1 || portInt > 0xFFFF {
-				return nil, fmt.Errorf("Invalid port number")
-			}
-			checkMap["port"] = parts[2]
-		case "interval":
-			if len(parts) != 2 {
-				return nil, fmt.Errorf("Invalid vip check interval format, must specify interval:duration")
-			}
-			if _, err := time.ParseDuration(parts[1]); err != nil {
-				return nil, fmt.Errorf("Invalid interval value")
-			}
-			checkMap["interval"] = parts[1]
-		case "timeout":
-			if len(parts) != 2 {
-				return nil, fmt.Errorf("Invalid vip check timeout format, must specify timeout:duration")
-			}
-			if _, err := time.ParseDuration(parts[1]); err != nil {
-				return nil, fmt.Errorf("Invalid timeout value")
-			}
-			checkMap["timeout"] = parts[1]
-		default:
-			glog.V(2).Infof("Invalid vip check specified")
 		}
+		consulCheckList = append(consulCheckList, newCheck)
 	}
-	return checkMap, nil
+	return consulCheckList, nil
 }
 
 func NewApp(appName, vip string, vipConfig config.VipConfig, monitors []string, nats []string, source string, vipService string, vipChecks []string) (*App, error) {
 	if appName == "" {
 		return nil, fmt.Errorf("Invalid app name")
 	}
-	app := &App{Name: appName, Nats: nats, Source: source, VipSvcName: vipService}
+	app := &App{Name: appName, Nats: nats, Source: source, VipConsulSvcName: vipService}
 	_, ipnet, err := net.ParseCIDR(vip)
 	if err != nil {
 		return nil, fmt.Errorf("Invalid VIP specified, need ip/mask")
 	}
 	app.Vip = &Route{Net: ipnet, Communities: vipConfig.BgpCommunities}
 	app.VipConfig = vipConfig
-	app.VipChecks, err = parseVipChecks(vipChecks)
+	app.VipConsulChecks, err = parseVipChecks(vipChecks)
 	if err != nil {
 		return nil, err
 	}

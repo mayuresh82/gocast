@@ -104,11 +104,17 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 		return apps, fmt.Errorf("Unable to decode consul data: %v", err)
 	}
 	glog.V(2).Infof("queryServices: Got %v services", len(consulData.Services))
+	// When using stale queries to consul, a 0 service count indicates the query failed. Under
+	// normal operation atleast the nomad client service should be returned. We dont want to
+	// withdraw the route for any established VIPs.
+	if len(consulData.Services) == 0 {
+		return apps, fmt.Errorf("queryServices returned 0. Skipping clean up of apps: %v", err)
+	}
 	for _, service := range consulData.Services {
 		if !contains(service.Tags, matchTag) {
 			continue
 		}
-		glog.V(2).Infof("queryServices: service %v id %v tags %v", service.Service, service.Service, service.Tags)
+		glog.V(2).Infof("queryServices: service %v id %v tags %v", service.Service, service.ID, service.Tags)
 		var (
 			vip       string
 			monitors  []string
@@ -223,64 +229,53 @@ func (c *ConsulMon) healthCheck(service string) (bool, error) {
 }
 
 // Register new vip health check after BGP announce
-func (c *ConsulMon) RegisterVIPServiceCheck(name string, checks map[string]string) {
+func (c *ConsulMon) RegisterVIPServiceCheck(name string, checks []VipConsulChecks) {
 	if name == "" || checks == nil || len(checks) == 0 {
 		glog.Info("No vip service check to be added")
 		return
 	}
 
-	// Only TCP health check is supported. HTTP health check TBD if needed.
-	if protocol, ok := checks["protocol"]; !ok || protocol != "tcp" {
-		glog.Errorf("Invalid check protocol. Only TCP supported")
-		return
-	}
+	for _, check := range checks {
+		if check.Protocol != "tcp" {
+			glog.Errorf("Invalid check protocol. Only TCP supported")
+			continue
+		}
+		type Check struct {
+			DeregisterCriticalServiceAfter string `json:"DeregisterCriticalServiceAfter"`
+			TCP                            string `json:"TCP"`
+			Interval                       string `json:"Interval"`
+			Timeout                        string `json:"Timeout"`
+		}
+		type Payload struct {
+			ID    string `json:"ID"`
+			Name  string `json:"Name"`
+			Port  int    `json:"Port"`
+			Check Check  `json:"Check"`
+		}
 
-	// Use following as the default interval & timeout if not specified
-	interval := "15s"
-	timeout := "2s"
-	if val, ok := checks["interval"]; ok {
-		interval = val
-	}
-	if val, ok := checks["timeout"]; ok {
-		timeout = val
-	}
-	portInt, _ := strconv.Atoi(checks["port"])
+		portInt, _ := strconv.Atoi(check.Port)
+		data := &Payload{
+			ID:   name + "-" + c.node,
+			Name: name,
+			Port: portInt,
+			Check: Check{
+				DeregisterCriticalServiceAfter: "10m",
+				TCP:                            "localhost:" + check.Port,
+				Interval:                       check.Interval,
+				Timeout:                        check.Timeout,
+			},
+		}
 
-	type Check struct {
-		DeregisterCriticalServiceAfter string `json:"DeregisterCriticalServiceAfter"`
-		TCP                            string `json:"TCP"`
-		Interval                       string `json:"Interval"`
-		Timeout                        string `json:"Timeout"`
+		body, _ := json.Marshal(&data)
+		if _, err := c.client.Do(c.addr+"/agent/service/register?replace-existing-checks=true", "PUT", bytes.NewBuffer(body)); err != nil {
+			glog.Errorf("HTTP PUT failed while registering VIP service: %v", err)
+		}
+		glog.V(2).Infof("Registered VIP service check to consul: %s", name+"-"+c.node)
 	}
-	type Payload struct {
-		ID    string `json:"ID"`
-		Name  string `json:"Name"`
-		Port  int    `json:"Port"`
-		Check Check  `json:"Check"`
-	}
-
-	data := &Payload{
-		ID:   name + "-" + c.node,
-		Name: name,
-		Port: portInt,
-		Check: Check{
-			DeregisterCriticalServiceAfter: "10m",
-			TCP:                            "localhost:" + checks["port"],
-			Interval:                       interval,
-			Timeout:                        timeout,
-		},
-	}
-
-	body, _ := json.Marshal(&data)
-	if _, err := c.client.Do("http://127.0.0.1:8500/v1/agent/service/register?replace-existing-checks=true", "PUT", bytes.NewBuffer(body)); err != nil {
-		glog.Errorf("HTTP PUT failed while registering VIP service: %v", err)
-	}
-	glog.V(2).Infof("Registered VIP service check to consul: %s", name+"-"+c.node)
-
 }
 
 // Deregister vip health check before BGP withdraw
-func (c *ConsulMon) DeregisterVIPServiceCheck(name string, checks map[string]string) {
+func (c *ConsulMon) DeregisterVIPServiceCheck(name string, checks []VipConsulChecks) {
 	if name == "" || checks == nil || len(checks) == 0 {
 		glog.Infof("No vip service check to be removed")
 		return
@@ -288,8 +283,8 @@ func (c *ConsulMon) DeregisterVIPServiceCheck(name string, checks map[string]str
 
 	// Service Deregister
 	svcId := name + "-" + c.node
-	glog.V(4).Infof("Service Dreg URL: http://127.0.0.1:8500/v1/agent/service/deregister/%s", svcId)
-	if _, err := c.client.Do("http://127.0.0.1:8500/v1/agent/service/deregister/"+svcId, "PUT", nil); err != nil {
+	glog.V(4).Infof("Service Dreg URL: %s/agent/service/deregister/%s", c.addr, svcId)
+	if _, err := c.client.Do(c.addr+"/agent/service/deregister/"+svcId, "PUT", nil); err != nil {
 		glog.Errorf("HTTP PUT failed while deregistering VIP service: %v", err)
 	} else {
 		glog.V(2).Infof("De-registered VIP service check: %s", svcId)
@@ -305,8 +300,8 @@ func (c *ConsulMon) DeregisterVIPServiceCheck(name string, checks map[string]str
 		ServiceID: svcId,
 	}
 	body, _ := json.Marshal(&data)
-	glog.V(4).Infof("Catalog Dreg URL: http://127.0.0.1:8500/v1/catalog/deregister, Body: %v", bytes.NewBuffer(body))
-	if _, err := c.client.Do("http://127.0.0.1:8500/v1/catalog/deregister", "PUT", bytes.NewBuffer(body)); err != nil {
+	glog.V(4).Infof("Catalog Dreg URL: %s/catalog/deregister, Body: %v", c.addr, bytes.NewBuffer(body))
+	if _, err := c.client.Do(c.addr+"/catalog/deregister", "PUT", bytes.NewBuffer(body)); err != nil {
 		glog.Errorf("HTTP PUT failed during catalog deregister VIP service: %v", err)
 	} else {
 		glog.V(2).Infof("Catalog De-registered VIP service check: %s", svcId)

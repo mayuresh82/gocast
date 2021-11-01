@@ -33,13 +33,13 @@ type VipConfig struct {
 }
 
 type AppConfig struct {
-	Name       string
-	Vip        string
-	VipConfig  VipConfig `yaml:"vip_config"`
-	Monitors   []string
-	Nats       []string
-	VipSvcName string
-	VipChecks  []string
+	Name             string
+	Vip              string
+	VipConfig        VipConfig `yaml:"vip_config"`
+	Monitors         []string
+	Nats             []string
+	VipConsulSvcName string `yaml:"vip_consul_svc_name"`
+	VipConsulChecks  []string
 }
 
 type Config struct {
