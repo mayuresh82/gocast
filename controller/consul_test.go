@@ -78,7 +78,7 @@ var mockConsulCheckData = map[string]string{
 }
 
 type MockClient struct {
-	get func(url string) (*http.Response, error)
+	get func(url string, method string, body io.Reader) (*http.Response, error)
 }
 
 func (c *MockClient) Get(url string) (*http.Response, error) {
@@ -89,22 +89,34 @@ func (c *MockClient) Get(url string) (*http.Response, error) {
 }
 
 type MockClienter struct {
+	DoFunc func(url, method string, req *http.Request) (*http.Response, error)
 }
 
-func (c *MockClienter) Do(url, method string, req *http.Request) (*http.Response, error) {
-	return &http.Response{}, nil
+var (
+	// GetDoFunc fetches the mock client's `Do` func
+	GetDoFunc func(url, method string, req *http.Request) (*http.Response, error)
+)
+
+// Do is the mock client's `Do` func
+func (m *MockClienter) Do(url, method string, req *http.Request) (*http.Response, error) {
+	return GetDoFunc(url, method, req)
 }
 
 func TestQueryServices(t *testing.T) {
 	a := assert.New(t)
-	client := &MockClient{}
-	clientnew := &MockClienter{}
-	cm := &ConsulMon{
-		addr: "foo", node: "test", client: clientnew,
+	client := &MockClienter{}
+	GetDoFunc = func(string, string, *http.Request) (*http.Response, error) {
+		b := bytes.NewBuffer([]byte(mockConsulData["single-app"]))
+		return &http.Response{Body: ioutil.NopCloser(b), StatusCode: http.StatusOK}, nil
 	}
 
+	cm := &ConsulMon{
+		addr: "foo", node: "test", client: MockClienter,
+	}
+
+	//cm.client = mockClient
 	// test valid app
-	cm.clientnew.Do(string, string, io.Reader)(*http.Response, error) = func(string, string, io.Reader) (*http.Response, error) {
+	GetDoFunc = func(string, string, *http.Request) (*http.Response, error) {
 		b := bytes.NewBuffer([]byte(mockConsulData["single-app"]))
 		return &http.Response{Body: ioutil.NopCloser(b), StatusCode: http.StatusOK}, nil
 	}
@@ -119,7 +131,7 @@ func TestQueryServices(t *testing.T) {
 	a.Equal(1, len(apps))
 	a.Equal([]string{"111:222", "333:444"}, apps[0].Vip.Communities)
 
-	app, _ := NewApp("test-service", "1.1.1.1/32", config.VipConfig{}, []string{"consul"}, []string{}, "consul")
+	app, _ := NewApp("test-service", "1.1.1.1/32", config.VipConfig{}, []string{"consul"}, []string{}, "consul", "", []string{})
 	a.True(app.Equal(apps[0]))
 
 	// test no match

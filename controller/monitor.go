@@ -135,9 +135,8 @@ func (m *MonitorMgr) consulMon() {
 	if err != nil {
 		glog.Errorf("Failed to query consul: %v", err)
 	} else {
-		glog.V(2).Infof("Got %v apps from consul.queryServices(). Num cur monitors %v", len(apps), len(m.monitors))
+		glog.V(2).Infof("Got %v apps from consul. Num cur monitors %v", len(apps), len(m.monitors))
 		for _, app := range apps {
-			glog.V(2).Infof("consulMon: Adding %v app, vip %s", app.Name, app.Vip.Net.String())
 			m.Add(app)
 		}
 		// remove currently running apps that are not discovered in this pass
@@ -172,7 +171,7 @@ func (m *MonitorMgr) Add(app *App) {
 	m.monMu.Lock()
 	for _, appMon := range m.monitors {
 		if appMon.app.Equal(app) && appMon.checkOn {
-			glog.V(2).Infof("App %s already exists", app.Name)
+			glog.V(3).Infof("App %s already exists", app.Name)
 			m.monMu.Unlock()
 			return
 		}

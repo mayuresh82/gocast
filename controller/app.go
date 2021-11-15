@@ -168,7 +168,7 @@ func NewApp(appName, vip string, vipConfig config.VipConfig, monitors []string, 
 			}
 			mon.Cmd = parts[1]
 		case "consul":
-			glog.V(2).Infof("Will use consul healthcheck monitor")
+			glog.V(3).Infof("Will use consul healthcheck monitor")
 		default:
 			glog.V(2).Infof("Invalid monitor specified")
 		}

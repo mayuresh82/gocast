@@ -114,7 +114,7 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 		if !contains(service.Tags, matchTag) {
 			continue
 		}
-		glog.V(2).Infof("queryServices: service %v id %v tags %v", service.Service, service.ID, service.Tags)
+		glog.V(3).Infof("queryServices: service %v id %v tags %v", service.Service, service.ID, service.Tags)
 		var (
 			vip       string
 			monitors  []string
@@ -268,9 +268,9 @@ func (c *ConsulMon) RegisterVIPServiceCheck(name string, checks []VipConsulCheck
 
 		body, _ := json.Marshal(&data)
 		if _, err := c.client.Do(c.addr+"/agent/service/register?replace-existing-checks=true", "PUT", bytes.NewBuffer(body)); err != nil {
-			glog.Errorf("HTTP PUT failed while registering VIP service: %v", err)
+			glog.Errorf("HTTP PUT failed while registering VIP service %s (checks: %v) err: %v", name+"-"+c.node, check, err)
 		}
-		glog.V(2).Infof("Registered VIP service check to consul: %s", name+"-"+c.node)
+		glog.V(2).Infof("Registered VIP service check to consul: %s, checks: %v", name+"-"+c.node, check)
 	}
 }
 
