@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/golang/glog"
 	"github.com/mayuresh82/gocast/config"
@@ -83,11 +84,16 @@ func (s *Server) infoHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) pingHandler(w http.ResponseWriter, r *http.Request) {
+	t := time.NewTimer(2 * time.Second)
+	defer t.Stop()
 	s.mon.Health <- struct{}{}
 	for {
 		select {
 		case <-s.mon.Health:
 			fmt.Fprintf(w, "I-AM-ALIVE\n")
+			return
+		case <-t.C: // If health doesnt pass before the timer expires, return 500 error.
+			http.Error(w, fmt.Sprintf("Deadlock!\n"), http.StatusInternalServerError)
 			return
 		}
 	}
