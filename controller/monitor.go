@@ -181,7 +181,7 @@ func (m *MonitorMgr) Remove(appName string) {
 	defer m.monMu.Unlock()
 	if a, ok := m.monitors[appName]; ok {
 		if a.checkOn {
-			a.done <- true
+			close(a.done)
 		}
 		if a.announced {
 			if err := m.ctrl.Withdraw(a.app.Vip); err != nil {
@@ -203,6 +203,7 @@ func (m *MonitorMgr) Remove(appName string) {
 	}
 	delete(m.monitors, appName)
 }
+
 func (m *MonitorMgr) runMonitors(app *App) bool {
 	for _, mon := range app.Monitors {
 		var check bool
@@ -250,7 +251,7 @@ func (m *MonitorMgr) checkCond(am *appMon) error {
 			}
 			am.announced = true
 			if exit, ok := m.cleanups[app.Name]; ok {
-				exit <- true
+				close(exit)
 				delete(m.cleanups, app.Name)
 			}
 		}
@@ -285,6 +286,7 @@ func (m *MonitorMgr) runLoop(am *appMon) {
 			}
 		case <-am.done:
 			glog.V(2).Infof("Exit run-loop for app: %s", am.app.Name)
+			am.checkOn = false
 			return
 		}
 	}
@@ -298,7 +300,7 @@ func (m *MonitorMgr) CloseAll() {
 	}
 	for _, am := range m.monitors {
 		if am.checkOn {
-			am.done <- true
+			close(am.done)
 		}
 		deleteLoopback(am.app.Vip.Net)
 		for _, nat := range am.app.Nats {
