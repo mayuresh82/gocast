@@ -332,6 +332,7 @@ func (m *MonitorMgr) Cleanup(app string, exit chan bool) {
 		case <-t.C:
 			glog.Infof("Cleaning up app %s", app)
 			m.Remove(app)
+			return
 		case <-exit:
 			return
 		}
