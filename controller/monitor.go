@@ -58,7 +58,7 @@ type appMon struct {
 	app       *App
 	done      chan bool
 	announced bool
-	checkOn   bool
+	runLoopOn bool
 }
 
 // MonitorMgr manages the lifecycle of registered apps
@@ -169,11 +169,12 @@ func (m *MonitorMgr) consulMon() {
 func (m *MonitorMgr) Add(app *App) {
 	// check if already running
 	m.monMu.Lock()
+	var existing *appMon
 	for _, appMon := range m.monitors {
-		if appMon.app.Equal(app) && appMon.checkOn {
+		if appMon.app.Equal(app) {
 			glog.V(3).Infof("App %s already exists", app.Name)
-			m.monMu.Unlock()
-			return
+			existing = appMon
+			break
 		}
 		if appMon.app.Vip.Net.String() == app.Vip.Net.String() && appMon.app.Name != app.Name {
 			glog.Errorf("Error: Vip %s is already being announced by app: %s", app.Vip.Net.String(), appMon.app.Name)
@@ -182,11 +183,19 @@ func (m *MonitorMgr) Add(app *App) {
 		}
 	}
 	m.monMu.Unlock()
-	m.Remove(app.Name)
-	appMon := &appMon{app: app, done: make(chan bool)}
-	m.monitors[app.Name] = appMon
-	go m.runLoop(appMon)
-	glog.Infof("Registered a new app: %v", app.String())
+	// if the same app already exists but its run loop is not running,
+	// then just restart the run loop
+	if existing != nil {
+		if !existing.runLoopOn {
+			go m.runLoop(existing)
+		}
+	} else {
+		// else add a new app and start its run loop
+		appMon := &appMon{app: app, done: make(chan bool)}
+		m.monitors[app.Name] = appMon
+		go m.runLoop(appMon)
+		glog.Infof("Registered a new app: %v", app.String())
+	}
 }
 
 // Remove removes an app from monitor manager, stops BGP
@@ -195,8 +204,8 @@ func (m *MonitorMgr) Remove(appName string) {
 	m.monMu.Lock()
 	defer m.monMu.Unlock()
 	if a, ok := m.monitors[appName]; ok {
-		if a.checkOn {
-			a.done <- true
+		if a.runLoopOn {
+			close(a.done)
 		}
 		if a.announced {
 			if err := m.withdrawRoute(a.app); err != nil {
@@ -287,7 +296,7 @@ func (m *MonitorMgr) checkCond(am *appMon) error {
 			}
 			am.announced = true
 			if exit, ok := m.cleanups[app.Name]; ok {
-				exit <- true
+				close(exit)
 				delete(m.cleanups, app.Name)
 			}
 		}
@@ -312,7 +321,8 @@ func (m *MonitorMgr) checkCond(am *appMon) error {
 // runLoop periodically checks if an app passes healthchecks
 // and needs VIP announcement
 func (m *MonitorMgr) runLoop(am *appMon) {
-	am.checkOn = true
+	glog.Infof("Starting run-loop for app %s", am.app.Name)
+	am.runLoopOn = true
 	if err := m.checkCond(am); err != nil {
 		glog.Errorln(err)
 	}
@@ -326,6 +336,7 @@ func (m *MonitorMgr) runLoop(am *appMon) {
 			}
 		case <-am.done:
 			glog.V(2).Infof("Exit run-loop for app: %s", am.app.Name)
+			am.runLoopOn = false
 			return
 		}
 	}
@@ -338,8 +349,8 @@ func (m *MonitorMgr) CloseAll() {
 		glog.Errorf("Failed to shut-down BGP: %v", err)
 	}
 	for _, am := range m.monitors {
-		if am.checkOn {
-			am.done <- true
+		if am.runLoopOn {
+			close(am.done)
 		}
 		m.consul.DeregisterVIPServiceCheck(am.app.VipConsulSvcName, am.app.VipConsulChecks)
 		deleteLoopback(am.app.Vip.Net)
@@ -362,6 +373,7 @@ func (m *MonitorMgr) Cleanup(app string, exit chan bool) {
 		case <-t.C:
 			glog.Infof("Cleaning up app %s", app)
 			m.Remove(app)
+			return
 		case <-exit:
 			return
 		}
