@@ -13,4 +13,4 @@ test:
 	go test -v -race -short -failfast -mod=vendor ./...
 
 linux:
-	GOOS=linux GOARCH=amd64 go build -o gocast_linux -mod=vendor .
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o gocast -mod=vendor .

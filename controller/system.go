@@ -23,7 +23,7 @@ func gateway() (net.IP, error) {
 	cmdList := getCmdList(cmd)
 	out, err := exec.Command(execCmd, cmdList...).Output()
 	if err != nil {
-		return nil, fmt.Errorf("Failed to execute command: %s", cmd)
+		return nil, fmt.Errorf("Failed to execute command: %s: %v", cmd, err)
 	}
 	return net.ParseIP(strings.TrimSpace(string(out))), nil
 }
@@ -33,7 +33,7 @@ func via(dest net.IP) (net.IP, error) {
 	cmdList := getCmdList(cmd)
 	out, err := exec.Command(execCmd, cmdList...).Output()
 	if err != nil {
-		return nil, fmt.Errorf("Failed to execute command: %s", cmd)
+		return nil, fmt.Errorf("Failed to execute command: %s: %v", cmd, err)
 	}
 	if string(out) == "" {
 		// assume the provided dest is the next hop
