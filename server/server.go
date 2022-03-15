@@ -86,7 +86,14 @@ func (s *Server) infoHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) pingHandler(w http.ResponseWriter, r *http.Request) {
 	t := time.NewTimer(2 * time.Second)
 	defer t.Stop()
-	s.mon.Health <- struct{}{}
+	select {
+	case s.mon.Health <- struct{}{}:
+		// Non-blocking send to the channel. Wait for response in the select loop below.
+	default:
+		// If write to channel itself is blocked, we might have already hit a deadlock.
+		// After timer t expires the loop below returns a 500 error to prevent a
+		// goroutine leak as this healthcheck might be periodically polled.
+	}
 	for {
 		select {
 		case <-s.mon.Health:

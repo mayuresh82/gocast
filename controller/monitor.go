@@ -83,7 +83,7 @@ func NewMonitor(config *c.Config) *MonitorMgr {
 		ctrl:     ctrl,
 		monitors: make(map[string]*appMon),
 		cleanups: make(map[string]chan bool),
-		Health:   make(chan struct{}),
+		Health:   make(chan struct{}, 5),
 	}
 	if config.Agent.ConsulAddr != "" {
 		cmon, err := NewConsulMon(config.Agent.ConsulAddr)
