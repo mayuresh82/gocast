@@ -50,7 +50,7 @@ GoCast supports consul for automatic service discovery and healthchecking. For t
 
 If `gocast_monitor=consul` is specified, then GoCast uses the defined healthchecks in consul as the health monitors for the service.
 
-If `gocast_nat=protocol:listenPort:destinationPort` is specified, then GoCast will create NAT rules, via iptables, and map traffic destined to the assigned VIP and the specified `listenport` to the physical IP and `destinationport`.
+If `gocast_nat=protocol:listenPort:destinationPort` is specified, then GoCast will create NAT rules, via iptables, and map traffic destined to the assigned VIP and the specified `listenPort` to the physical IP and `destinationPort`.
 
 Example: `gocast_nat=tcp:53:8053` and `gocast_nat=udp:53:8053`
 
