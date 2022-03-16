@@ -205,7 +205,7 @@ func (m *MonitorMgr) Remove(appName string) {
 			if len(parts) != 2 {
 				continue
 			}
-			if err := natRule("D", a.app.Vip.Net.IP, m.ctrl.localIP, parts[0], parts[1]); err != nil {
+			if err := natRule("D", a.app.Vip.Net.IP, m.ctrl.localIP, parts[0], parts[1], parts[2]); err != nil {
 				glog.Errorf("Failed to remove app: %s: %v", a.app.Name, err)
 			}
 		}
@@ -251,7 +251,7 @@ func (m *MonitorMgr) checkCond(am *appMon) error {
 				if len(parts) != 2 {
 					continue
 				}
-				if err := natRule("A", app.Vip.Net.IP, m.ctrl.localIP, parts[0], parts[1]); err != nil {
+				if err := natRule("A", app.Vip.Net.IP, m.ctrl.localIP, parts[0], parts[1], parts[2]); err != nil {
 					return err
 				}
 			}
@@ -318,7 +318,7 @@ func (m *MonitorMgr) CloseAll() {
 			if len(parts) != 2 {
 				continue
 			}
-			natRule("D", am.app.Vip.Net.IP, m.ctrl.localIP, parts[0], parts[1])
+			natRule("D", am.app.Vip.Net.IP, m.ctrl.localIP, parts[0], parts[1], parts[2])
 		}
 	}
 }

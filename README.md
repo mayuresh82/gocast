@@ -50,6 +50,10 @@ GoCast supports consul for automatic service discovery and healthchecking. For t
 
 If `gocast_monitor=consul` is specified, then GoCast uses the defined healthchecks in consul as the health monitors for the service.
 
+If `gocast_nat=protocol:listenPort:destinationPort` is specified, then GoCast will create NAT rules, via iptables, and map traffic destined to the assigned VIP and the specified `listenport` to the physical IP and `destinationport`.
+
+Example: `gocast_nat=tcp:53:8053` and `gocast_nat=udp:53:8053`
+
 ## Docker support
 The docker image at mayuresh82/gocast can be used to run GoCast inside a container. In order for GoCast to manipulate the host network stack correctly, the container needs to run with NET_ADMIN capablity and host mode networking. For example:
 ```
@@ -63,7 +67,7 @@ Certain orchestration solutions such as Nomad run the docker containers with pub
 
 - Start the service container in host networking mode OR
 
-- Register NAT rules for your service with GoCast for the required protocol/port(s). GoCast will then create iptables NAT rules that map traffic destined to the assigned VIP to the physical IP address. This is achieved by adding the `nat=protocol:port` tag(s) in consul or the http query.
+- Register NAT rules for your service with GoCast for the required protocol/port(s). GoCast will then create iptables NAT rules that map traffic destined to the assigned VIP to the physical IP address. This is achieved by adding the `nat=protocol:listenPort:destinationPort` in the http query or `gocast_nat=protocol:listenPort:destinationPort` tag(s) in consul, as shown in the Consul integration section above.
 
 **Why not just use ExaBGP or something similar ?**
 
