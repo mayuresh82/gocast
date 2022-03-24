@@ -54,6 +54,10 @@ If `gocast_nat=protocol:listenPort:destinationPort` is specified, then GoCast wi
 
 Example: `gocast_nat=tcp:53:8053` and `gocast_nat=udp:53:8053`
 
+Alternatively, if `gocast_nat=protocol:port` is specified, then GoCast will create NAT rules, via iptables, and map traffic destined to the assigned VIP and the specified `port` to the physical IP and `port`.
+
+Example: `gocast_nat=tcp:53` and `gocast_nat=udp:53`
+
 ## Docker support
 The docker image at mayuresh82/gocast can be used to run GoCast inside a container. In order for GoCast to manipulate the host network stack correctly, the container needs to run with NET_ADMIN capablity and host mode networking. For example:
 ```
