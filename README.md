@@ -3,6 +3,8 @@
 Gocast is a tool that does controller BGP route advertisements from a host. It runs custom defined healthchecks and announces or withdraws routes (most commonly VIPs or Virtual IPs) to a BGP peer.
 The most common use case for this is anycast (vip) based load balancing for infrastructure services such as DNS, Syslog etc where several instances are available in geographically diverse regions that announce the same anycast VIP, and clients then get sent to the closest instance.
 
+For some practical examples and more details, check out this blog post : https://mayuresh82.github.io/2020/11/28/automatic_service_discovery_anycast/
+
 ## Installation
 Use the docker container at mayuresh82/gocast or compile from source:
 
