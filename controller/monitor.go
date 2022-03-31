@@ -202,11 +202,17 @@ func (m *MonitorMgr) Remove(appName string) {
 		}
 		for _, nat := range a.app.Nats {
 			parts := strings.Split(nat, ":")
-			if len(parts) != 2 {
+			switch len(parts) {
+			case 3:
+				if err := natRule("D", a.app.Vip.Net.IP, m.ctrl.localIP, parts[0], parts[1], parts[2]); err != nil {
+					glog.Errorf("Failed to remove app: %s: %v", a.app.Name, err)
+				}
+			case 2:
+				if err := natRule("D", a.app.Vip.Net.IP, m.ctrl.localIP, parts[0], parts[1], parts[1]); err != nil {
+					glog.Errorf("Failed to remove app: %s: %v", a.app.Name, err)
+				}
+			default:
 				continue
-			}
-			if err := natRule("D", a.app.Vip.Net.IP, m.ctrl.localIP, parts[0], parts[1]); err != nil {
-				glog.Errorf("Failed to remove app: %s: %v", a.app.Name, err)
 			}
 		}
 	}
@@ -248,11 +254,17 @@ func (m *MonitorMgr) checkCond(am *appMon) error {
 			}
 			for _, nat := range app.Nats {
 				parts := strings.Split(nat, ":")
-				if len(parts) != 2 {
+				switch len(parts) {
+				case 3:
+					if err := natRule("A", app.Vip.Net.IP, m.ctrl.localIP, parts[0], parts[1], parts[2]); err != nil {
+						return err
+					}
+				case 2:
+					if err := natRule("A", app.Vip.Net.IP, m.ctrl.localIP, parts[0], parts[1], parts[1]); err != nil {
+						return err
+					}
+				default:
 					continue
-				}
-				if err := natRule("A", app.Vip.Net.IP, m.ctrl.localIP, parts[0], parts[1]); err != nil {
-					return err
 				}
 			}
 			if err := m.ctrl.Announce(app.Vip); err != nil {
@@ -315,10 +327,14 @@ func (m *MonitorMgr) CloseAll() {
 		deleteLoopback(am.app.Vip.Net)
 		for _, nat := range am.app.Nats {
 			parts := strings.Split(nat, ":")
-			if len(parts) != 2 {
+			switch len(parts) {
+			case 3:
+				natRule("D", am.app.Vip.Net.IP, m.ctrl.localIP, parts[0], parts[1], parts[2])
+			case 2:
+				natRule("D", am.app.Vip.Net.IP, m.ctrl.localIP, parts[0], parts[1], parts[1])
+			default:
 				continue
 			}
-			natRule("D", am.app.Vip.Net.IP, m.ctrl.localIP, parts[0], parts[1])
 		}
 	}
 }
