@@ -146,7 +146,7 @@ func (c *ConsulMon) healthCheckLocal(service string) (bool, error) {
 			return false, nil
 		}
 	}
-	return false, fmt.Errorf("No local healcheck info found for service %s on node %s in consul", service, c.node)
+	return false, fmt.Errorf("No local healthcheck info found for service %s on node %s in consul", service, c.node)
 }
 
 // healthCheckRemote queries the consul cluster's healthcheck endpoint to perform service healthchecks
@@ -174,7 +174,7 @@ func (c *ConsulMon) healthCheckRemote(service string) (bool, error) {
 			return false, nil
 		}
 	}
-	return false, fmt.Errorf("No healcheck info found for node %s in consul", c.node)
+	return false, fmt.Errorf("No healthcheck info found for node %s in consul", c.node)
 }
 
 // healthCheck determines if we should use the local agent
