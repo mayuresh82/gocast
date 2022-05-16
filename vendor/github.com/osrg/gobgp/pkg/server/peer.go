@@ -57,6 +57,10 @@ func (pg *peerGroup) AddDynamicNeighbor(c *config.DynamicNeighbor) {
 	pg.dynamicNeighbors[c.Config.Prefix] = c
 }
 
+func (pg *peerGroup) DeleteDynamicNeighbor(prefix string) {
+	delete(pg.dynamicNeighbors, prefix)
+}
+
 func newDynamicPeer(g *config.Global, neighborAddress string, pg *config.PeerGroup, loc *table.TableManager, policy *table.RoutingPolicy) *peer {
 	conf := config.Neighbor{
 		Config: config.NeighborConfig{
@@ -129,6 +133,15 @@ func (peer *peer) ID() string {
 	peer.fsm.lock.RLock()
 	defer peer.fsm.lock.RUnlock()
 	return peer.fsm.pConf.State.NeighborAddress
+}
+
+func (peer *peer) RouterID() string {
+	peer.fsm.lock.RLock()
+	defer peer.fsm.lock.RUnlock()
+	if peer.fsm.peerInfo.ID != nil {
+		return peer.fsm.peerInfo.ID.String()
+	}
+	return ""
 }
 
 func (peer *peer) TableID() string {
@@ -348,7 +361,22 @@ func (peer *peer) stopPeerRestarting() {
 }
 
 func (peer *peer) filterPathFromSourcePeer(path, old *table.Path) *table.Path {
-	if peer.ID() != path.GetSource().Address.String() {
+	// Consider 3 peers - A, B, C and prefix P originated by C. Parallel eBGP
+	// sessions exist between A & B, and both have a single session with C.
+	//
+	// When A receives the withdraw from C, we enter this func for each peer of
+	// A, with the following:
+	// peer: [C, B #1, B #2]
+	// path: new best for P facing B
+	// old: old best for P facing C
+	//
+	// Our comparison between peer identifier and path source ID must be router
+	// ID-based (not neighbor address), otherwise we will return early. If we
+	// return early for one of the two sessions facing B
+	// (whichever is not the new best path), we fail to send a withdraw towards
+	// B, and the route is "stuck".
+	// TODO: considerations for RFC6286
+	if peer.RouterID() != path.GetSource().ID.String() {
 		return path
 	}
 

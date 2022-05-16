@@ -58,12 +58,13 @@ func (a PolicyAction) String() string {
 // policy. These rules are matched with XfrmState to determine encryption
 // and authentication algorithms.
 type XfrmPolicyTmpl struct {
-	Dst   net.IP
-	Src   net.IP
-	Proto Proto
-	Mode  Mode
-	Spi   int
-	Reqid int
+	Dst      net.IP
+	Src      net.IP
+	Proto    Proto
+	Mode     Mode
+	Spi      int
+	Reqid    int
+	Optional int
 }
 
 func (t XfrmPolicyTmpl) String() string {
@@ -85,11 +86,12 @@ type XfrmPolicy struct {
 	Index    int
 	Action   PolicyAction
 	Ifindex  int
+	Ifid     int
 	Mark     *XfrmMark
 	Tmpls    []XfrmPolicyTmpl
 }
 
 func (p XfrmPolicy) String() string {
-	return fmt.Sprintf("{Dst: %v, Src: %v, Proto: %s, DstPort: %d, SrcPort: %d, Dir: %s, Priority: %d, Index: %d, Action: %s, Ifindex: %d, Mark: %s, Tmpls: %s}",
-		p.Dst, p.Src, p.Proto, p.DstPort, p.SrcPort, p.Dir, p.Priority, p.Index, p.Action, p.Ifindex, p.Mark, p.Tmpls)
+	return fmt.Sprintf("{Dst: %v, Src: %v, Proto: %s, DstPort: %d, SrcPort: %d, Dir: %s, Priority: %d, Index: %d, Action: %s, Ifindex: %d, Ifid: %d, Mark: %s, Tmpls: %s}",
+		p.Dst, p.Src, p.Proto, p.DstPort, p.SrcPort, p.Dir, p.Priority, p.Index, p.Action, p.Ifindex, p.Ifid, p.Mark, p.Tmpls)
 }
