@@ -634,27 +634,53 @@ func MarshalNLRI(value bgp.AddrPrefixInterface) *any.Any {
 		switch n := v.NLRI.(type) {
 		case *bgp.LsNodeNLRI:
 			nlri = &api.LsAddrPrefix{
-				Type: api.LsNLRIType_LS_NLRI_NODE,
-				Nlri: MarshalLsNodeNLRI(n),
+				Type:       api.LsNLRIType_LS_NLRI_NODE,
+				Nlri:       MarshalLsNodeNLRI(n),
+				Length:     uint32(n.Length),
+				ProtocolId: api.LsProtocolID(n.ProtocolID),
+				Identifier: n.Identifier,
 			}
 
 		case *bgp.LsLinkNLRI:
 			nlri = &api.LsAddrPrefix{
-				Type: api.LsNLRIType_LS_NLRI_LINK,
-				Nlri: MarshalLsLinkNLRI(n),
+				Type:       api.LsNLRIType_LS_NLRI_LINK,
+				Nlri:       MarshalLsLinkNLRI(n),
+				Length:     uint32(n.Length),
+				ProtocolId: api.LsProtocolID(n.ProtocolID),
+				Identifier: n.Identifier,
 			}
 
 		case *bgp.LsPrefixV4NLRI:
 			nlri = &api.LsAddrPrefix{
-				Type: api.LsNLRIType_LS_NLRI_PREFIX_V4,
-				Nlri: MarshalLsPrefixV4NLRI(n),
+				Type:       api.LsNLRIType_LS_NLRI_PREFIX_V4,
+				Nlri:       MarshalLsPrefixV4NLRI(n),
+				Length:     uint32(n.Length),
+				ProtocolId: api.LsProtocolID(n.ProtocolID),
+				Identifier: n.Identifier,
 			}
 
 		case *bgp.LsPrefixV6NLRI:
 			nlri = &api.LsAddrPrefix{
-				Type: api.LsNLRIType_LS_NLRI_PREFIX_V6,
-				Nlri: MarshalLsPrefixV6NLRI(n),
+				Type:       api.LsNLRIType_LS_NLRI_PREFIX_V6,
+				Nlri:       MarshalLsPrefixV6NLRI(n),
+				Length:     uint32(n.Length),
+				ProtocolId: api.LsProtocolID(n.ProtocolID),
+				Identifier: n.Identifier,
 			}
+		}
+	case *bgp.SRPolicyIPv4:
+		nlri = &api.SRPolicyNLRI{
+			Length:        uint32(v.Length),
+			Distinguisher: v.Distinguisher,
+			Color:         v.Color,
+			Endpoint:      v.Endpoint,
+		}
+	case *bgp.SRPolicyIPv6:
+		nlri = &api.SRPolicyNLRI{
+			Length:        uint32(v.Length),
+			Distinguisher: v.Distinguisher,
+			Color:         v.Color,
+			Endpoint:      v.Endpoint,
 		}
 	}
 
@@ -756,6 +782,13 @@ func UnmarshalNLRI(rf bgp.RouteFamily, an *any.Any) (bgp.AddrPrefixInterface, er
 			}
 			nlri = bgp.NewEVPNIPPrefixRoute(rd, *esi, v.EthernetTag, uint8(v.IpPrefixLen), v.IpPrefix, v.GwAddress, v.Label)
 		}
+	case *api.SRPolicyNLRI:
+		switch rf {
+		case bgp.RF_SR_POLICY_IPv4:
+			nlri = bgp.NewSRPolicyIPv4(v.Length, v.Distinguisher, v.Color, v.Endpoint)
+		case bgp.RF_SR_POLICY_IPv6:
+			nlri = bgp.NewSRPolicyIPv6(v.Length, v.Distinguisher, v.Color, v.Endpoint)
+		}
 	case *api.LabeledVPNIPAddressPrefix:
 		rd, err := UnmarshalRD(v.Rd)
 		if err != nil {
@@ -828,7 +861,7 @@ func NewMpReachNLRIAttributeFromNative(a *bgp.PathAttributeMpReachNLRI) *api.MpR
 		nexthops = nil
 	} else {
 		nexthops = []string{a.Nexthop.String()}
-		if a.LinkLocalNexthop != nil {
+		if a.LinkLocalNexthop != nil && a.LinkLocalNexthop.IsLinkLocalUnicast() {
 			nexthops = append(nexthops, a.LinkLocalNexthop.String())
 		}
 	}
@@ -951,6 +984,11 @@ func NewExtendedCommunitiesAttributeFromNative(a *bgp.PathAttributeExtendedCommu
 			community = &api.ValidationExtended{
 				State: uint32(v.State),
 			}
+		case *bgp.LinkBandwidthExtended:
+			community = &api.LinkBandiwdthExtended{
+				As:        uint32(v.AS),
+				Bandwidth: v.Bandwidth,
+			}
 		case *bgp.ColorExtended:
 			community = &api.ColorExtended{
 				Color: v.Color,
@@ -1050,6 +1088,8 @@ func unmarshalExComm(a *api.ExtendedCommunitiesAttribute) (*bgp.PathAttributeExt
 			community = bgp.NewFourOctetAsSpecificExtended(bgp.ExtendedCommunityAttrSubType(v.SubType), v.As, uint16(v.LocalAdmin), v.IsTransitive)
 		case *api.ValidationExtended:
 			community = bgp.NewValidationExtended(bgp.ValidationState(v.State))
+		case *api.LinkBandiwdthExtended:
+			community = bgp.NewLinkBandwidthExtended(uint16(v.As), v.Bandwidth)
 		case *api.ColorExtended:
 			community = bgp.NewColorExtended(v.Color)
 		case *api.EncapExtended:
@@ -1143,10 +1183,48 @@ func NewTunnelEncapAttributeFromNative(a *bgp.PathAttributeTunnelEncap) *api.Tun
 				subTlv = &api.TunnelEncapSubTLVColor{
 					Color: sv.Color,
 				}
+			case *bgp.TunnelEncapSubTLVEgressEndpoint:
+				subTlv = &api.TunnelEncapSubTLVEgressEndpoint{
+					Address: sv.Address.String(),
+				}
+			case *bgp.TunnelEncapSubTLVUDPDestPort:
+				subTlv = &api.TunnelEncapSubTLVUDPDestPort{
+					Port: uint32(sv.UDPDestPort),
+				}
 			case *bgp.TunnelEncapSubTLVUnknown:
 				subTlv = &api.TunnelEncapSubTLVUnknown{
 					Type:  uint32(sv.Type),
 					Value: sv.Value,
+				}
+			case *bgp.TunnelEncapSubTLVSRBSID:
+				subTlv = MarshalSRBSID(sv)
+				// TODO (sbezverk) Add processing of SRv6 Binding SID when it gets assigned ID
+			case *bgp.TunnelEncapSubTLVSRCandidatePathName:
+				subTlv = &api.TunnelEncapSubTLVSRCandidatePathName{
+					CandidatePathName: sv.CandidatePathName,
+				}
+				// TODO (sbezverk) Add processing of SR Policy name when it gets assigned ID
+			case *bgp.TunnelEncapSubTLVSRENLP:
+				subTlv = &api.TunnelEncapSubTLVSRENLP{
+					Flags: uint32(sv.Flags),
+					Enlp:  api.ENLPType(sv.ENLP),
+				}
+			case *bgp.TunnelEncapSubTLVSRPreference:
+				subTlv = &api.TunnelEncapSubTLVSRPreference{
+					Flags:      uint32(sv.Flags),
+					Preference: sv.Preference,
+				}
+			case *bgp.TunnelEncapSubTLVSRPriority:
+				subTlv = &api.TunnelEncapSubTLVSRPriority{
+					Priority: uint32(sv.Priority),
+				}
+			case *bgp.TunnelEncapSubTLVSRSegmentList:
+				subTlv = &api.TunnelEncapSubTLVSRSegmentList{
+					Weight: &api.SRWeight{
+						Flags:  uint32(sv.Weight.Flags),
+						Weight: uint32(sv.Weight.Weight),
+					},
+					Segments: MarshalSRSegments(sv.Segments),
 				}
 			}
 			an, _ := ptypes.MarshalAny(subTlv)
@@ -1433,6 +1511,9 @@ func MarshalPathAttributes(attrList []bgp.PathAttributeInterface) []*any.Any {
 		case *bgp.PathAttributeLs:
 			n, _ := ptypes.MarshalAny(NewLsAttributeFromNative(a))
 			anyList = append(anyList, n)
+		case *bgp.PathAttributePrefixSID:
+			n, _ := ptypes.MarshalAny(NewPrefixSIDAttributeFromNative(a))
+			anyList = append(anyList, n)
 		case *bgp.PathAttributeUnknown:
 			n, _ := ptypes.MarshalAny(NewUnknownAttributeFromNative(a))
 			anyList = append(anyList, n)
@@ -1506,6 +1587,9 @@ func unmarshalAttribute(an *any.Any) (bgp.PathAttributeInterface, error) {
 		}
 		return bgp.NewPathAttributeClusterList(a.Ids), nil
 	case *api.MpReachNLRIAttribute:
+		if a.Family == nil {
+			return nil, fmt.Errorf("empty family")
+		}
 		rf := ToRouteFamily(a.Family)
 		nlris, err := UnmarshalNLRIs(rf, a.Nlris)
 		if err != nil {
@@ -1589,10 +1673,62 @@ func unmarshalAttribute(an *any.Any) (bgp.PathAttributeInterface, error) {
 					subTlv = bgp.NewTunnelEncapSubTLVProtocol(uint16(sv.Protocol))
 				case *api.TunnelEncapSubTLVColor:
 					subTlv = bgp.NewTunnelEncapSubTLVColor(sv.Color)
+				case *api.TunnelEncapSubTLVEgressEndpoint:
+					subTlv = bgp.NewTunnelEncapSubTLVEgressEndpoint(sv.Address)
+				case *api.TunnelEncapSubTLVUDPDestPort:
+					subTlv = bgp.NewTunnelEncapSubTLVUDPDestPort(uint16(sv.Port))
+				case *api.TunnelEncapSubTLVSRPreference:
+					subTlv = bgp.NewTunnelEncapSubTLVSRPreference(sv.Flags, sv.Preference)
+				case *api.TunnelEncapSubTLVSRPriority:
+					subTlv = bgp.NewTunnelEncapSubTLVSRPriority(uint8(sv.Priority))
+				case *api.TunnelEncapSubTLVSRCandidatePathName:
+					subTlv = bgp.NewTunnelEncapSubTLVSRCandidatePathName(sv.CandidatePathName)
+				case *api.TunnelEncapSubTLVSRENLP:
+					subTlv = bgp.NewTunnelEncapSubTLVSRENLP(sv.Flags, bgp.SRENLPValue(sv.Enlp))
+				case *api.TunnelEncapSubTLVSRBindingSID:
+					var err error
+					subTlv, err = UnmarshalSRBSID(sv.Bsid)
+					if err != nil {
+						return nil, fmt.Errorf("failed to unmarshal tunnel encapsulation attribute sub tlv: %s", err)
+					}
+				case *api.TunnelEncapSubTLVSRSegmentList:
+					var err error
+					weight := uint32(0)
+					flags := uint8(0)
+					if sv.Weight != nil {
+						weight = sv.Weight.Weight
+						flags = uint8(sv.Weight.Flags)
+					}
+					s := &bgp.TunnelEncapSubTLVSRSegmentList{
+						TunnelEncapSubTLV: bgp.TunnelEncapSubTLV{
+							Type:   bgp.ENCAP_SUBTLV_TYPE_SRSEGMENT_LIST,
+							Length: uint16(6), // Weight (6 bytes) + length of segment (added later, after all segments are discovered)
+						},
+						Weight: &bgp.SegmentListWeight{
+							TunnelEncapSubTLV: bgp.TunnelEncapSubTLV{
+								Type:   bgp.SegmentListSubTLVWeight,
+								Length: uint16(6),
+							},
+							Flags:  flags,
+							Weight: weight,
+						},
+						Segments: make([]bgp.TunnelEncapSubTLVInterface, 0),
+					}
+					if len(sv.Segments) != 0 {
+						s.Segments, err = UnmarshalSRSegments(sv.Segments)
+						if err != nil {
+							return nil, fmt.Errorf("failed to unmarshal tunnel encapsulation attribute sub tlv: %s", err)
+						}
+					}
+					// Get total length of Segment List Sub TLV
+					for _, seg := range s.Segments {
+						s.TunnelEncapSubTLV.Length += uint16(seg.Len() + 2) // Adding 1 byte of type and 1 byte of length for each Segment object
+					}
+					subTlv = s
 				case *api.TunnelEncapSubTLVUnknown:
 					subTlv = bgp.NewTunnelEncapSubTLVUnknown(bgp.EncapSubTLVType(sv.Type), sv.Value)
 				default:
-					return nil, fmt.Errorf("invalid tunnel encapsulation attribute sub tlv: %v", subValue.Message)
+					return nil, fmt.Errorf("invalid tunnel encapsulation attribute sub tlv: %v type: %T", subValue.Message, sv)
 				}
 				subTlvs = append(subTlvs, subTlv)
 			}
@@ -1653,4 +1789,191 @@ func unmarshalAttribute(an *any.Any) (bgp.PathAttributeInterface, error) {
 		return bgp.NewPathAttributeUnknown(bgp.BGPAttrFlag(a.Flags), bgp.BGPAttrType(a.Type), a.Value), nil
 	}
 	return nil, errors.New("unknown path attribute")
+}
+
+// MarshalSRBSID marshals SR Policy Binding SID Sub TLV structure
+func MarshalSRBSID(bsid *bgp.TunnelEncapSubTLVSRBSID) *any.Any {
+	var r proto.Message
+	s := &api.SRBindingSID{
+		Sid: make([]byte, len(bsid.BSID.Value)),
+	}
+	copy(s.Sid, bsid.BSID.Value)
+	s.SFlag = bsid.Flags&0x80 == 0x80
+	s.IFlag = bsid.Flags&0x40 == 0x40
+	r = s
+	a, _ := ptypes.MarshalAny(r)
+	return a
+}
+
+// UnmarshalSRBSID unmarshals SR Policy Binding SID Sub TLV and returns native TunnelEncapSubTLVInterface interface
+func UnmarshalSRBSID(bsid *any.Any) (bgp.TunnelEncapSubTLVInterface, error) {
+	var value ptypes.DynamicAny
+	if err := ptypes.UnmarshalAny(bsid, &value); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal tunnel encap sub tlv: %s", err)
+	}
+	switch v := value.Message.(type) {
+	case *api.SRBindingSID:
+		b, err := bgp.NewBSID(v.Sid)
+		if err != nil {
+			return nil, err
+		}
+		flags := uint8(0x0)
+		if v.SFlag {
+			flags += 0x80
+		}
+		if v.IFlag {
+			flags += 0x40
+		}
+		return &bgp.TunnelEncapSubTLVSRBSID{
+			TunnelEncapSubTLV: bgp.TunnelEncapSubTLV{
+				Type:   bgp.ENCAP_SUBTLV_TYPE_SRBINDING_SID,
+				Length: uint16(2 + b.Len()),
+			},
+			BSID:  b,
+			Flags: flags,
+		}, nil
+	case *api.SRv6BindingSID:
+		b, err := bgp.NewBSID(v.Sid)
+		if err != nil {
+			return nil, err
+		}
+		result := &bgp.TunnelEncapSubTLVSRv6BSID{
+			TunnelEncapSubTLV: bgp.TunnelEncapSubTLV{
+				Type:   bgp.ENCAP_SUBTLV_TYPE_SRBINDING_SID,
+				Length: uint16(2 + b.Len()),
+			},
+			Flags: 0,
+			BSID:  b,
+		}
+
+		if v.EndpointBehaviorStructure != nil {
+			result.EPBAS = &bgp.SRv6EndpointBehaviorStructure{
+				Behavior: bgp.SRBehavior(v.EndpointBehaviorStructure.Behavior),
+				BlockLen: uint8(v.EndpointBehaviorStructure.BlockLen),
+				NodeLen:  uint8(v.EndpointBehaviorStructure.NodeLen),
+				FuncLen:  uint8(v.EndpointBehaviorStructure.FuncLen),
+				ArgLen:   uint8(v.EndpointBehaviorStructure.ArgLen),
+			}
+		}
+
+		return result, nil
+	default:
+		return nil, fmt.Errorf("unknown binding sid type %+v", v)
+	}
+}
+
+// MarshalSRSegments marshals a slice of SR Policy Segment List
+func MarshalSRSegments(segs []bgp.TunnelEncapSubTLVInterface) []*any.Any {
+	anyList := make([]*any.Any, 0, len(segs))
+	for _, seg := range segs {
+		var r proto.Message
+		switch s := seg.(type) {
+		case *bgp.SegmentTypeA:
+			r = &api.SegmentTypeA{
+				Label: s.Label,
+				Flags: &api.SegmentFlags{
+					VFlag: s.Flags&0x80 == 0x80,
+					AFlag: s.Flags&0x40 == 0x40,
+					SFlag: s.Flags&0x20 == 0x20,
+					BFlag: s.Flags&0x10 == 0x10,
+				},
+			}
+		case *bgp.SegmentTypeB:
+			flags := &api.SegmentFlags{
+				VFlag: s.Flags&0x80 == 0x80,
+				AFlag: s.Flags&0x40 == 0x40,
+				SFlag: s.Flags&0x20 == 0x20,
+				BFlag: s.Flags&0x10 == 0x10,
+			}
+			segment := &api.SegmentTypeB{
+				Flags: flags,
+				Sid:   s.SID,
+			}
+			if s.SRv6EBS != nil {
+				segment.EndpointBehaviorStructure = &api.SRv6EndPointBehavior{
+					Behavior: api.SRv6Behavior(s.SRv6EBS.Behavior),
+					BlockLen: uint32(s.SRv6EBS.BlockLen),
+					NodeLen:  uint32(s.SRv6EBS.NodeLen),
+					FuncLen:  uint32(s.SRv6EBS.FuncLen),
+					ArgLen:   uint32(s.SRv6EBS.ArgLen),
+				}
+			}
+			r = segment
+		default:
+			// Unrecognize Segment type, skip it
+			continue
+		}
+		a, _ := ptypes.MarshalAny(r)
+		anyList = append(anyList, a)
+	}
+	return anyList
+}
+
+// UnmarshalSRSegments unmarshals SR Policy Segments slice of structs
+func UnmarshalSRSegments(s []*any.Any) ([]bgp.TunnelEncapSubTLVInterface, error) {
+	if len(s) == 0 {
+		return nil, nil
+	}
+	segments := make([]bgp.TunnelEncapSubTLVInterface, len(s))
+	for i := 0; i < len(s); i++ {
+		var value ptypes.DynamicAny
+		if err := ptypes.UnmarshalAny(s[i], &value); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal SR Policy Segment: %s", err)
+		}
+		switch v := value.Message.(type) {
+		case *api.SegmentTypeA:
+			seg := &bgp.SegmentTypeA{
+				TunnelEncapSubTLV: bgp.TunnelEncapSubTLV{
+					Type:   bgp.EncapSubTLVType(bgp.TypeA),
+					Length: 6,
+				},
+				Label: v.Label,
+			}
+			if v.Flags.VFlag {
+				seg.Flags += 0x80
+			}
+			if v.Flags.AFlag {
+				seg.Flags += 0x40
+			}
+			if v.Flags.SFlag {
+				seg.Flags += 0x20
+			}
+			if v.Flags.BFlag {
+				seg.Flags += 0x10
+			}
+			segments[i] = seg
+		case *api.SegmentTypeB:
+			seg := &bgp.SegmentTypeB{
+				TunnelEncapSubTLV: bgp.TunnelEncapSubTLV{
+					Type:   bgp.EncapSubTLVType(bgp.TypeB),
+					Length: 18,
+				},
+				SID: v.GetSid(),
+			}
+			if v.Flags.VFlag {
+				seg.Flags += 0x80
+			}
+			if v.Flags.AFlag {
+				seg.Flags += 0x40
+			}
+			if v.Flags.SFlag {
+				seg.Flags += 0x20
+			}
+			if v.Flags.BFlag {
+				seg.Flags += 0x10
+			}
+			if v.EndpointBehaviorStructure != nil {
+				ebs := v.GetEndpointBehaviorStructure()
+				seg.SRv6EBS = &bgp.SRv6EndpointBehaviorStructure{
+					Behavior: bgp.SRBehavior(ebs.Behavior),
+					BlockLen: uint8(ebs.BlockLen),
+					NodeLen:  uint8(ebs.NodeLen),
+					FuncLen:  uint8(ebs.FuncLen),
+					ArgLen:   uint8(ebs.ArgLen),
+				}
+			}
+			segments[i] = seg
+		}
+	}
+	return segments, nil
 }

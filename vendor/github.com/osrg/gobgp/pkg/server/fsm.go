@@ -21,6 +21,7 @@ import (
 	"io"
 	"math/rand"
 	"net"
+	"os"
 	"strconv"
 	"sync"
 	"syscall"
@@ -714,8 +715,11 @@ func capAddPathFromConfig(pConf *config.Neighbor) bgp.ParameterCapabilityInterfa
 }
 
 func capabilitiesFromConfig(pConf *config.Neighbor) []bgp.ParameterCapabilityInterface {
+	fqdn, _ := os.Hostname()
 	caps := make([]bgp.ParameterCapabilityInterface, 0, 4)
 	caps = append(caps, bgp.NewCapRouteRefresh())
+	caps = append(caps, bgp.NewCapFQDN(fqdn, ""))
+
 	for _, af := range pConf.AfiSafis {
 		caps = append(caps, bgp.NewCapMultiProtocol(af.State.Family))
 	}
@@ -869,7 +873,8 @@ func (h *fsmHandler) afiSafiDisable(rf bgp.RouteFamily) string {
 }
 
 func (h *fsmHandler) handlingError(m *bgp.BGPMessage, e error, useRevisedError bool) bgp.ErrorHandling {
-	handling := bgp.ERROR_HANDLING_NONE
+	// ineffectual assignment to handling (ineffassign)
+	var handling bgp.ErrorHandling
 	if m.Header.Type == bgp.BGP_MSG_UPDATE && useRevisedError {
 		factor := e.(*bgp.MessageError)
 		handling = factor.ErrorHandling
@@ -1015,6 +1020,13 @@ func (h *fsmHandler) recvMessageWithError() (*fsmMsg, error) {
 			case bgp.BGP_MSG_ROUTE_REFRESH:
 				fmsg.MsgType = fsmMsgRouteRefresh
 			case bgp.BGP_MSG_UPDATE:
+				// if the length of h.holdTimerResetCh
+				// isn't zero, the timer will be reset
+				// soon anyway.
+				select {
+				case h.holdTimerResetCh <- true:
+				default:
+				}
 				body := m.Body.(*bgp.BGPUpdate)
 				isEBGP := h.fsm.pConf.IsEBGPPeer(h.fsm.gConf)
 				isConfed := h.fsm.pConf.IsConfederationMember(h.fsm.gConf)
@@ -1266,7 +1278,7 @@ func (h *fsmHandler) opensent(ctx context.Context) (bgp.FSMState, *fsmStateReaso
 					fsm.lock.RLock()
 					fsmPeerAS := fsm.pConf.Config.PeerAs
 					fsm.lock.RUnlock()
-					peerAs, err := bgp.ValidateOpenMsg(body, fsmPeerAS)
+					peerAs, err := bgp.ValidateOpenMsg(body, fsmPeerAS, fsm.peerInfo.LocalAS, net.ParseIP(fsm.gConf.Config.RouterId))
 					if err != nil {
 						m, _ := fsm.sendNotificationFromErrorMsg(err.(*bgp.MessageError))
 						return bgp.BGP_FSM_IDLE, newfsmStateReason(fsmInvalidMsg, m, nil)
@@ -1569,6 +1581,14 @@ func (h *fsmHandler) openconfirm(ctx context.Context) (bgp.FSMState, *fsmStateRe
 }
 
 func (h *fsmHandler) sendMessageloop(ctx context.Context, wg *sync.WaitGroup) error {
+	sendToStateReasonCh := func(typ fsmStateReasonType, notif *bgp.BGPMessage) {
+		// probably doesn't happen but be cautious
+		select {
+		case h.stateReasonCh <- *newfsmStateReason(typ, notif, nil):
+		default:
+		}
+	}
+
 	defer wg.Done()
 	conn := h.conn
 	fsm := h.fsm
@@ -1603,7 +1623,7 @@ func (h *fsmHandler) sendMessageloop(ctx context.Context, wg *sync.WaitGroup) er
 		err = conn.SetWriteDeadline(time.Now().Add(time.Second * time.Duration(fsm.pConf.Timers.State.NegotiatedHoldTime)))
 		fsm.lock.RUnlock()
 		if err != nil {
-			h.stateReasonCh <- *newfsmStateReason(fsmWriteFailed, nil, nil)
+			sendToStateReasonCh(fsmWriteFailed, nil)
 			conn.Close()
 			return fmt.Errorf("failed to set write deadline")
 		}
@@ -1617,7 +1637,7 @@ func (h *fsmHandler) sendMessageloop(ctx context.Context, wg *sync.WaitGroup) er
 				"Data":  err,
 			}).Warn("failed to send")
 			fsm.lock.RUnlock()
-			h.stateReasonCh <- *newfsmStateReason(fsmWriteFailed, nil, nil)
+			sendToStateReasonCh(fsmWriteFailed, nil)
 			conn.Close()
 			return fmt.Errorf("closed")
 		}
@@ -1651,7 +1671,7 @@ func (h *fsmHandler) sendMessageloop(ctx context.Context, wg *sync.WaitGroup) er
 				}).Warn("sent notification")
 				fsm.lock.RUnlock()
 			}
-			h.stateReasonCh <- *newfsmStateReason(fsmNotificationSent, m, nil)
+			sendToStateReasonCh(fsmNotificationSent, m)
 			conn.Close()
 			return fmt.Errorf("closed")
 		case bgp.BGP_MSG_UPDATE:

@@ -79,6 +79,7 @@ func (h *Handle) xfrmPolicyAddOrUpdate(policy *XfrmPolicy, nlProto int) error {
 		userTmpl.XfrmId.Spi = nl.Swap32(uint32(tmpl.Spi))
 		userTmpl.Mode = uint8(tmpl.Mode)
 		userTmpl.Reqid = uint32(tmpl.Reqid)
+		userTmpl.Optional = uint8(tmpl.Optional)
 		userTmpl.Aalgos = ^uint32(0)
 		userTmpl.Ealgos = ^uint32(0)
 		userTmpl.Calgos = ^uint32(0)
@@ -91,6 +92,9 @@ func (h *Handle) xfrmPolicyAddOrUpdate(policy *XfrmPolicy, nlProto int) error {
 		out := nl.NewRtAttr(nl.XFRMA_MARK, writeMark(policy.Mark))
 		req.AddData(out)
 	}
+
+	ifId := nl.NewRtAttr(nl.XFRMA_IF_ID, nl.Uint32Attr(uint32(policy.Ifid)))
+	req.AddData(ifId)
 
 	_, err := req.Execute(unix.NETLINK_XFRM, 0)
 	return err
@@ -185,6 +189,9 @@ func (h *Handle) xfrmPolicyGetOrDelete(policy *XfrmPolicy, nlProto int) (*XfrmPo
 		req.AddData(out)
 	}
 
+	ifId := nl.NewRtAttr(nl.XFRMA_IF_ID, nl.Uint32Attr(uint32(policy.Ifid)))
+	req.AddData(ifId)
+
 	resType := nl.XFRM_MSG_NEWPOLICY
 	if nlProto == nl.XFRM_MSG_DELPOLICY {
 		resType = 0
@@ -199,12 +206,7 @@ func (h *Handle) xfrmPolicyGetOrDelete(policy *XfrmPolicy, nlProto int) (*XfrmPo
 		return nil, err
 	}
 
-	p, err := parseXfrmPolicy(msgs[0], FAMILY_ALL)
-	if err != nil {
-		return nil, err
-	}
-
-	return p, nil
+	return parseXfrmPolicy(msgs[0], FAMILY_ALL)
 }
 
 func parseXfrmPolicy(m []byte, family int) (*XfrmPolicy, error) {
@@ -246,6 +248,7 @@ func parseXfrmPolicy(m []byte, family int) (*XfrmPolicy, error) {
 				resTmpl.Mode = Mode(tmpl.Mode)
 				resTmpl.Spi = int(nl.Swap32(tmpl.XfrmId.Spi))
 				resTmpl.Reqid = int(tmpl.Reqid)
+				resTmpl.Optional = int(tmpl.Optional)
 				policy.Tmpls = append(policy.Tmpls, resTmpl)
 			}
 		case nl.XFRMA_MARK:
@@ -253,6 +256,8 @@ func parseXfrmPolicy(m []byte, family int) (*XfrmPolicy, error) {
 			policy.Mark = new(XfrmMark)
 			policy.Mark.Value = mark.Value
 			policy.Mark.Mask = mark.Mask
+		case nl.XFRMA_IF_ID:
+			policy.Ifid = int(native.Uint32(attr.Value))
 		}
 	}
 
