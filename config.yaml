@@ -9,6 +9,8 @@ agent:
   consul_addr: https://consul
   # interval to query consul for app discovery
   consul_query_interval: 5m
+  # token to authenticate client if consul requires it
+  consul_token: 00000000-0000-0000-0000-000000000000
 
 bgp:
   local_as: 12345
