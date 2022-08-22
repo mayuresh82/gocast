@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"testing"
 
 	"github.com/mayuresh82/gocast/config"
@@ -77,14 +78,41 @@ var mockConsulCheckData = map[string]string{
 }
 
 type MockClient struct {
-	get func(url string) (*http.Response, error)
+	do func(*http.Request) (*http.Response, error)
 }
 
-func (c *MockClient) Get(url string) (*http.Response, error) {
-	if c.get != nil {
-		return c.get(url)
+func (c *MockClient) Do(*http.Request) (*http.Response, error) {
+	if c.do != nil {
+		return c.do(&http.Request{})
 	}
 	return nil, nil
+}
+
+func TestGetNewHTTPReq(t *testing.T) {
+	a := assert.New(t)
+
+	// test with consul token from config file
+	req, err := getHTTPReq("GET", "1.1.1.1", "3333-3333")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Equal(req.Header.Get("X-Consul-Token"), "3333-3333")
+
+	// test with consul token from env variable
+	os.Setenv("CONSUL_TOKEN", "4444-4444")
+	req, err = getHTTPReq("GET", "1.1.1.1", "3333-3333")
+	os.Unsetenv("CONSUL_TOKEN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Equal(req.Header.Get("X-Consul-Token"), "4444-4444")
+
+	// test without consul token
+	req, err = getHTTPReq("GET", "1.1.1.1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Equal(req.Header.Get("X-Consul-Token"), "")
 }
 
 func TestQueryServices(t *testing.T) {
@@ -95,7 +123,7 @@ func TestQueryServices(t *testing.T) {
 	}
 
 	// test valid app
-	client.get = func(url string) (*http.Response, error) {
+	client.do = func(*http.Request) (*http.Response, error) {
 		b := bytes.NewBuffer([]byte(mockConsulData["single-app"]))
 		return &http.Response{Body: ioutil.NopCloser(b), StatusCode: http.StatusOK}, nil
 	}
@@ -110,7 +138,7 @@ func TestQueryServices(t *testing.T) {
 	a.True(app.Equal(apps[0]))
 
 	// test no match
-	client.get = func(url string) (*http.Response, error) {
+	client.do = func(*http.Request) (*http.Response, error) {
 		b := bytes.NewBuffer([]byte(mockConsulData["single-app-no-match"]))
 		return &http.Response{Body: ioutil.NopCloser(b), StatusCode: http.StatusOK}, nil
 	}
@@ -121,7 +149,7 @@ func TestQueryServices(t *testing.T) {
 	a.Equal(0, len(apps))
 
 	// test missing vip
-	client.get = func(url string) (*http.Response, error) {
+	client.do = func(*http.Request) (*http.Response, error) {
 		b := bytes.NewBuffer([]byte(mockConsulData["single-app-no-vip"]))
 		return &http.Response{Body: ioutil.NopCloser(b), StatusCode: http.StatusOK}, nil
 	}
@@ -136,7 +164,7 @@ func TestHealthCheck(t *testing.T) {
 
 	// test remote checks
 	cm.addr = "http://remote/check"
-	client.get = func(url string) (*http.Response, error) {
+	client.do = func(*http.Request) (*http.Response, error) {
 		b := bytes.NewBuffer([]byte(mockConsulCheckData["remote-pass"]))
 		return &http.Response{Body: ioutil.NopCloser(b), StatusCode: http.StatusOK}, nil
 	}
@@ -145,7 +173,7 @@ func TestHealthCheck(t *testing.T) {
 		a.FailNow(err.Error())
 	}
 	a.True(check)
-	client.get = func(url string) (*http.Response, error) {
+	client.do = func(*http.Request) (*http.Response, error) {
 		b := bytes.NewBuffer([]byte(mockConsulCheckData["remote-fail"]))
 		return &http.Response{Body: ioutil.NopCloser(b), StatusCode: http.StatusOK}, nil
 	}
@@ -154,7 +182,7 @@ func TestHealthCheck(t *testing.T) {
 
 	// test local checks
 	cm.addr = "http://localhost/check"
-	client.get = func(url string) (*http.Response, error) {
+	client.do = func(*http.Request) (*http.Response, error) {
 		b := bytes.NewBuffer([]byte(mockConsulCheckData["local-pass"]))
 		return &http.Response{Body: ioutil.NopCloser(b), StatusCode: http.StatusOK}, nil
 	}
@@ -164,7 +192,7 @@ func TestHealthCheck(t *testing.T) {
 	}
 	a.True(check)
 	cm.addr = "http://127.0.0.1/check"
-	client.get = func(url string) (*http.Response, error) {
+	client.do = func(*http.Request) (*http.Response, error) {
 		b := bytes.NewBuffer([]byte(mockConsulCheckData["local-fail"]))
 		return &http.Response{Body: ioutil.NopCloser(b), StatusCode: http.StatusOK}, nil
 	}
