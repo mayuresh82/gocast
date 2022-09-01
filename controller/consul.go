@@ -85,6 +85,9 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 	}
 	addr := c.addr + fmt.Sprintf("%s/%s?%s", nodeURL, c.node, stale)
 	req, err := getHTTPReq(http.MethodGet, addr, c.token)
+	if err != nil {
+		return apps, err
+	}
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return apps, err
@@ -143,6 +146,9 @@ func (c *ConsulMon) healthCheckLocal(service string) (bool, error) {
 	params.Add("filter", "enable_gocast in ServiceTags")
 	addr := c.addr + fmt.Sprintf("%s?%s", localHealthCheckurl, params.Encode())
 	req, err := getHTTPReq(http.MethodGet, addr, c.token)
+	if err != nil {
+		return false, err
+	}
 	resp, err := c.client.Do(req)
 	if err != nil {
 		glog.V(2).Infof("Error getting %s with %s", addr, err)
@@ -172,6 +178,9 @@ func (c *ConsulMon) healthCheckLocal(service string) (bool, error) {
 func (c *ConsulMon) healthCheckRemote(service string) (bool, error) {
 	addr := c.addr + fmt.Sprintf("%s/%s", remoteHealthCheckurl, service)
 	req, err := getHTTPReq(http.MethodGet, addr, c.token)
+	if err != nil {
+		return false, err
+	}
 	resp, err := c.client.Do(req)
 	if err != nil {
 		glog.V(2).Infof("Error getting %s with %s", addr, err)
