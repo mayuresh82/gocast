@@ -15,6 +15,7 @@ import (
 
 const (
 	consulNodeEnv        = "CONSUL_NODE"
+	consulToken          = "CONSUL_TOKEN"
 	allowStale           = "CONSUL_STALE"
 	matchTag             = "enable_gocast"
 	nodeURL              = "/catalog/node"
@@ -23,7 +24,7 @@ const (
 )
 
 type Clienter interface {
-	Get(url string) (*http.Response, error)
+	Do(req *http.Request) (*http.Response, error)
 }
 
 type Client struct {
@@ -32,6 +33,7 @@ type Client struct {
 
 type ConsulMon struct {
 	addr   string
+	token  string
 	node   string
 	client Clienter
 }
@@ -53,12 +55,26 @@ func contains(inp []string, elem string) bool {
 	return false
 }
 
-func NewConsulMon(addr string) (*ConsulMon, error) {
+func NewConsulMon(addr string, token string) (*ConsulMon, error) {
 	node := os.Getenv(consulNodeEnv)
 	if node == "" {
 		return nil, fmt.Errorf("%s env variable not set", consulNodeEnv)
 	}
-	return &ConsulMon{addr: addr, node: node, client: &http.Client{Timeout: 10 * time.Second}}, nil
+	return &ConsulMon{addr: addr, token: token, node: node, client: &http.Client{Timeout: 10 * time.Second}}, nil
+}
+
+func getHTTPReq(httpMethod string, addr string, tokenFrmCfg string) (*http.Request, error) {
+	req, err := http.NewRequest(httpMethod, addr, nil)
+	if err != nil {
+		return nil, err
+	}
+	tokenFrmEnv := os.Getenv(consulToken)
+	if tokenFrmEnv != "" {
+		req.Header.Set("X-Consul-Token", tokenFrmEnv)
+	} else if tokenFrmCfg != "" {
+		req.Header.Set("X-Consul-Token", tokenFrmCfg)
+	}
+	return req, nil
 }
 
 func (c *ConsulMon) queryServices() ([]*App, error) {
@@ -68,7 +84,11 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 		stale = "stale"
 	}
 	addr := c.addr + fmt.Sprintf("%s/%s?%s", nodeURL, c.node, stale)
-	resp, err := c.client.Get(addr)
+	req, err := getHTTPReq(http.MethodGet, addr, c.token)
+	if err != nil {
+		return apps, err
+	}
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return apps, err
 	}
@@ -125,7 +145,11 @@ func (c *ConsulMon) healthCheckLocal(service string) (bool, error) {
 	params := url.Values{}
 	params.Add("filter", "enable_gocast in ServiceTags")
 	addr := c.addr + fmt.Sprintf("%s?%s", localHealthCheckurl, params.Encode())
-	resp, err := c.client.Get(addr)
+	req, err := getHTTPReq(http.MethodGet, addr, c.token)
+	if err != nil {
+		return false, err
+	}
+	resp, err := c.client.Do(req)
 	if err != nil {
 		glog.V(2).Infof("Error getting %s with %s", addr, err)
 		return false, err
@@ -153,7 +177,11 @@ func (c *ConsulMon) healthCheckLocal(service string) (bool, error) {
 // This is the underlying api call: https://www.consul.io/api/health.html
 func (c *ConsulMon) healthCheckRemote(service string) (bool, error) {
 	addr := c.addr + fmt.Sprintf("%s/%s", remoteHealthCheckurl, service)
-	resp, err := c.client.Get(addr)
+	req, err := getHTTPReq(http.MethodGet, addr, c.token)
+	if err != nil {
+		return false, err
+	}
+	resp, err := c.client.Do(req)
 	if err != nil {
 		glog.V(2).Infof("Error getting %s with %s", addr, err)
 		return false, err

@@ -15,6 +15,7 @@ type AgentConfig struct {
 	CleanupTimer        time.Duration `yaml:"cleanup_timer"`
 	ConsulAddr          string        `yaml:"consul_addr"`
 	ConsulQueryInterval time.Duration `yaml:"consul_query_interval"`
+	ConsulToken			string		  `yaml:"consul_token"`
 }
 
 type BgpConfig struct {

@@ -84,7 +84,7 @@ func NewMonitor(config *c.Config) *MonitorMgr {
 		cleanups: make(map[string]chan bool),
 	}
 	if config.Agent.ConsulAddr != "" {
-		cmon, err := NewConsulMon(config.Agent.ConsulAddr)
+		cmon, err := NewConsulMon(config.Agent.ConsulAddr, config.Agent.ConsulToken)
 		if err != nil {
 			glog.Errorf("Failed to start consul monitor: %v", err)
 		} else {
