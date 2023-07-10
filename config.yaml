@@ -29,4 +29,5 @@ apps:
     vip_config:
       # additional per VIP BGP communities
       bgp_communities: [ aaaa:bbbb ]
-    monitor: port:tcp:5000
+    monitors: 
+      - port:tcp:5000
