@@ -5,6 +5,9 @@ The most common use case for this is anycast (vip) based load balancing for infr
 
 For some practical examples and more details, check out this blog post : https://mayuresh82.github.io/2020/11/28/automatic_service_discovery_anycast/
 
+# Looking for code reviewers
+If you are interested in being a reviewer and/or co-maintainer, please reach out to @mayuresh82 !
+
 ## Installation
 Use the docker container at mayuresh82/gocast or compile from source:
 
