@@ -32,10 +32,13 @@ func NewController(config c.BgpConfig) (*Controller, error) {
 	c := &Controller{}
 	var gw net.IP
 	var err error
+	if config.Family == 0 {
+		config.Family = 4
+	}
 	if config.PeerIP == "" {
-		gw, err := gateway()
+		gw, err := gateway(config.Family)
 		if err != nil {
-			return nil, fmt.Errorf("Unable to get gw ip: %v", err)
+			return nil, fmt.Errorf("unable to get gw ip: %v", err)
 		}
 		c.peerIP = gw
 	} else {
@@ -44,7 +47,7 @@ func NewController(config c.BgpConfig) (*Controller, error) {
 	if config.LocalIP == "" {
 		gw, err = via(c.peerIP)
 		if err != nil {
-			return nil, fmt.Errorf("Unable to get gw ip: %v", err)
+			return nil, fmt.Errorf("unable to get gw ip: %v", err)
 		}
 		c.localIP, err = localAddress(gw)
 		if err != nil {
@@ -62,16 +65,23 @@ func NewController(config c.BgpConfig) (*Controller, error) {
 	case "unknown":
 		c.origin = 2
 	}
+	var rid string
+	if config.Family == 4 {
+		rid = c.localIP.String()
+	}
+	if config.RouterID != "" {
+		rid = config.RouterID
+	}
 	s := gobgp.NewBgpServer()
 	go s.Serve()
 	if err := s.StartBgp(context.Background(), &api.StartBgpRequest{
 		Global: &api.Global{
 			As:         uint32(config.LocalAS),
-			RouterId:   c.localIP.String(),
+			RouterId:   rid,
 			ListenPort: -1, // gobgp won't listen on tcp:179
 		},
 	}); err != nil {
-		return nil, fmt.Errorf("Unable to start bgp: %v", err)
+		return nil, fmt.Errorf("unable to start bgp: %v", err)
 	}
 	c.s = s
 	c.peerAS = config.PeerAS

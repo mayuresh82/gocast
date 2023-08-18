@@ -21,6 +21,12 @@ bgp:
     - asn:nnnn
     - asn:nnnn
   origin: igp
+  # family will determine whether we want to peer over an ipv4 or ipv6 session
+  # one gocast instance can only peer over one session. Multiple sessions are not
+  # supported. The default is 4
+  family: 4
+  # router ID is required when family 6 is specified
+  router_id: 1.1.1.1
 
 # optional list of apps to register on startup
 apps:

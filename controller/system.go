@@ -18,8 +18,12 @@ func getCmdList(mainCmd string) []string {
 	return cmdList
 }
 
-func gateway() (net.IP, error) {
-	cmd := `ip route | grep "^default" | cut -d" " -f3`
+func gateway(family int) (net.IP, error) {
+	prefix := "ip"
+	if family == 6 {
+		prefix = "ip -6"
+	}
+	cmd := fmt.Sprintf(`%s route | grep "^default" | cut -d" " -f3`, prefix)
 	cmdList := getCmdList(cmd)
 	out, err := exec.Command(execCmd, cmdList...).Output()
 	if err != nil {
@@ -29,7 +33,11 @@ func gateway() (net.IP, error) {
 }
 
 func via(dest net.IP) (net.IP, error) {
-	cmd := fmt.Sprintf(`ip route get %s | grep via | cut -d" " -f3`, dest.String())
+	prefix := "ip"
+	if dest.To4() == nil {
+		prefix = "ip -6"
+	}
+	cmd := fmt.Sprintf(`%s route get %s | grep via | cut -d" " -f3`, prefix, dest.String())
 	cmdList := getCmdList(cmd)
 	out, err := exec.Command(execCmd, cmdList...).Output()
 	if err != nil {
@@ -66,7 +74,11 @@ func addLoopback(name string, addr *net.IPNet) error {
 	if len(label) > 15 {
 		label = label[:15]
 	}
-	cmd := fmt.Sprintf("ip address add %s/%d dev lo label %s", addr.IP.String(), prefixLen, label)
+	prefix := "ip"
+	if addr.IP.To4() == nil {
+		prefix = "ip -6"
+	}
+	cmd := fmt.Sprintf("%s address add %s/%d dev lo label %s", prefix, addr.IP.String(), prefixLen, label)
 	cmdList := getCmdList(cmd)
 	_, err := exec.Command(execCmd, cmdList...).Output()
 	if err != nil {
@@ -76,8 +88,12 @@ func addLoopback(name string, addr *net.IPNet) error {
 }
 
 func deleteLoopback(addr *net.IPNet) error {
+	prefix := "ip"
+	if addr.IP.To4() == nil {
+		prefix = "ip -6"
+	}
 	prefixLen, _ := addr.Mask.Size()
-	cmd := fmt.Sprintf("ip address delete %s/%d dev lo", addr.IP.String(), prefixLen)
+	cmd := fmt.Sprintf("%s address delete %s/%d dev lo", prefix, addr.IP.String(), prefixLen)
 	cmdList := getCmdList(cmd)
 	_, err := exec.Command(execCmd, cmdList...).Output()
 	if err != nil {
@@ -87,9 +103,13 @@ func deleteLoopback(addr *net.IPNet) error {
 }
 
 func natRule(op string, vip, localAddr net.IP, protocol, lport, dport string) error {
+	prefix := "iptables"
+	if vip.To4() == nil {
+		prefix = "ip6tables"
+	}
 	cmd := fmt.Sprintf(
-		"iptables -t nat -%s PREROUTING -p %s -d %s --dport %s -j DNAT --to-destination %s:%s",
-		op, protocol, vip.String(), lport, localAddr.String(), dport,
+		"%s -t nat -%s PREROUTING -p %s -d %s --dport %s -j DNAT --to-destination %s:%s",
+		prefix, op, protocol, vip.String(), lport, localAddr.String(), dport,
 	)
 	cmdList := getCmdList(cmd)
 	_, err := exec.Command(execCmd, cmdList...).Output()
