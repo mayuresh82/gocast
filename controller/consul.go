@@ -17,7 +17,7 @@ const (
 	consulNodeEnv        = "CONSUL_NODE"
 	consulToken          = "CONSUL_TOKEN"
 	allowStale           = "CONSUL_STALE"
-	matchTag             = "enable_gocast"
+	defaultmatchTag      = "enable_gocast"
 	nodeURL              = "/catalog/node"
 	remoteHealthCheckurl = "/health/checks"
 	localHealthCheckurl  = "/agent/checks"
@@ -32,10 +32,11 @@ type Client struct {
 }
 
 type ConsulMon struct {
-	addr   string
-	token  string
-	node   string
-	client Clienter
+	addr     string
+	token    string
+	node     string
+	matchTag string
+	client   Clienter
 }
 
 type ConsulServiceData struct {
@@ -55,12 +56,15 @@ func contains(inp []string, elem string) bool {
 	return false
 }
 
-func NewConsulMon(addr string, token string) (*ConsulMon, error) {
+func NewConsulMon(addr string, token string, matchTag string) (*ConsulMon, error) {
 	node := os.Getenv(consulNodeEnv)
 	if node == "" {
 		return nil, fmt.Errorf("%s env variable not set", consulNodeEnv)
 	}
-	return &ConsulMon{addr: addr, token: token, node: node, client: &http.Client{Timeout: 10 * time.Second}}, nil
+	if matchTag == "" {
+		matchTag = defaultmatchTag
+	}
+	return &ConsulMon{addr: addr, token: token, node: node, client: &http.Client{Timeout: 10 * time.Second}, matchTag: matchTag}, nil
 }
 
 func getHTTPReq(httpMethod string, addr string, tokenFrmCfg string) (*http.Request, error) {
@@ -95,10 +99,10 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 	defer resp.Body.Close()
 	var consulData ConsulServiceData
 	if err := json.NewDecoder(resp.Body).Decode(&consulData); err != nil {
-		return apps, fmt.Errorf("Unable to decode consul data: %v", err)
+		return apps, fmt.Errorf("unable to decode consul data: %v", err)
 	}
 	for _, service := range consulData.Services {
-		if !contains(service.Tags, matchTag) {
+		if !contains(service.Tags, c.matchTag) {
 			continue
 		}
 		var (
@@ -170,7 +174,7 @@ func (c *ConsulMon) healthCheckLocal(service string) (bool, error) {
 			return false, nil
 		}
 	}
-	return false, fmt.Errorf("No local healthcheck info found for service %s on node %s in consul", service, c.node)
+	return false, fmt.Errorf("no local healthcheck info found for service %s on node %s in consul", service, c.node)
 }
 
 // healthCheckRemote queries the consul cluster's healthcheck endpoint to perform service healthchecks
@@ -202,7 +206,7 @@ func (c *ConsulMon) healthCheckRemote(service string) (bool, error) {
 			return false, nil
 		}
 	}
-	return false, fmt.Errorf("No healthcheck info found for node %s in consul", c.node)
+	return false, fmt.Errorf("no healthcheck info found for node %s in consul", c.node)
 }
 
 // healthCheck determines if we should use the local agent

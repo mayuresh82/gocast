@@ -16,6 +16,7 @@ type AgentConfig struct {
 	ConsulAddr          string        `yaml:"consul_addr"`
 	ConsulQueryInterval time.Duration `yaml:"consul_query_interval"`
 	ConsulToken         string        `yaml:"consul_token"`
+	ConsulMatchTag      string        `yaml:"consul_match_tag"`
 }
 
 type BgpConfig struct {

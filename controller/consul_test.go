@@ -2,7 +2,7 @@ package controller
 
 import (
 	"bytes"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"testing"
@@ -119,13 +119,13 @@ func TestQueryServices(t *testing.T) {
 	a := assert.New(t)
 	client := &MockClient{}
 	cm := &ConsulMon{
-		addr: "foo", node: "test", client: client,
+		addr: "foo", node: "test", client: client, matchTag: "enable_gocast",
 	}
 
 	// test valid app
 	client.do = func(*http.Request) (*http.Response, error) {
 		b := bytes.NewBuffer([]byte(mockConsulData["single-app"]))
-		return &http.Response{Body: ioutil.NopCloser(b), StatusCode: http.StatusOK}, nil
+		return &http.Response{Body: io.NopCloser(b), StatusCode: http.StatusOK}, nil
 	}
 	apps, err := cm.queryServices()
 	if err != nil {
@@ -140,7 +140,7 @@ func TestQueryServices(t *testing.T) {
 	// test no match
 	client.do = func(*http.Request) (*http.Response, error) {
 		b := bytes.NewBuffer([]byte(mockConsulData["single-app-no-match"]))
-		return &http.Response{Body: ioutil.NopCloser(b), StatusCode: http.StatusOK}, nil
+		return &http.Response{Body: io.NopCloser(b), StatusCode: http.StatusOK}, nil
 	}
 	apps, err = cm.queryServices()
 	if err != nil {
@@ -151,7 +151,7 @@ func TestQueryServices(t *testing.T) {
 	// test missing vip
 	client.do = func(*http.Request) (*http.Response, error) {
 		b := bytes.NewBuffer([]byte(mockConsulData["single-app-no-vip"]))
-		return &http.Response{Body: ioutil.NopCloser(b), StatusCode: http.StatusOK}, nil
+		return &http.Response{Body: io.NopCloser(b), StatusCode: http.StatusOK}, nil
 	}
 	apps, _ = cm.queryServices()
 	a.Equal(0, len(apps))
@@ -160,13 +160,13 @@ func TestQueryServices(t *testing.T) {
 func TestHealthCheck(t *testing.T) {
 	a := assert.New(t)
 	client := &MockClient{}
-	cm := &ConsulMon{node: "test-node1", client: client}
+	cm := &ConsulMon{node: "test-node1", client: client, matchTag: "enable_gocast"}
 
 	// test remote checks
 	cm.addr = "http://remote/check"
 	client.do = func(*http.Request) (*http.Response, error) {
 		b := bytes.NewBuffer([]byte(mockConsulCheckData["remote-pass"]))
-		return &http.Response{Body: ioutil.NopCloser(b), StatusCode: http.StatusOK}, nil
+		return &http.Response{Body: io.NopCloser(b), StatusCode: http.StatusOK}, nil
 	}
 	check, err := cm.healthCheck("test-service")
 	if err != nil {
@@ -175,7 +175,7 @@ func TestHealthCheck(t *testing.T) {
 	a.True(check)
 	client.do = func(*http.Request) (*http.Response, error) {
 		b := bytes.NewBuffer([]byte(mockConsulCheckData["remote-fail"]))
-		return &http.Response{Body: ioutil.NopCloser(b), StatusCode: http.StatusOK}, nil
+		return &http.Response{Body: io.NopCloser(b), StatusCode: http.StatusOK}, nil
 	}
 	check, _ = cm.healthCheck("test-service")
 	a.False(check)
@@ -184,7 +184,7 @@ func TestHealthCheck(t *testing.T) {
 	cm.addr = "http://localhost/check"
 	client.do = func(*http.Request) (*http.Response, error) {
 		b := bytes.NewBuffer([]byte(mockConsulCheckData["local-pass"]))
-		return &http.Response{Body: ioutil.NopCloser(b), StatusCode: http.StatusOK}, nil
+		return &http.Response{Body: io.NopCloser(b), StatusCode: http.StatusOK}, nil
 	}
 	check, _ = cm.healthCheck("test-service")
 	if err != nil {
@@ -194,7 +194,7 @@ func TestHealthCheck(t *testing.T) {
 	cm.addr = "http://127.0.0.1/check"
 	client.do = func(*http.Request) (*http.Response, error) {
 		b := bytes.NewBuffer([]byte(mockConsulCheckData["local-fail"]))
-		return &http.Response{Body: ioutil.NopCloser(b), StatusCode: http.StatusOK}, nil
+		return &http.Response{Body: io.NopCloser(b), StatusCode: http.StatusOK}, nil
 	}
 	check, _ = cm.healthCheck("test-service")
 	a.False(check)

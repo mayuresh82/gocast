@@ -11,6 +11,9 @@ agent:
   consul_query_interval: 5m
   # token to authenticate client if consul requires it
   consul_token: 00000000-0000-0000-0000-000000000000
+  # this tag must be present in consul for Gocast to pickup the service
+  # by default its enable_gocast
+  consul_match_tag: enable_gocast
 
 bgp:
   local_as: 12345

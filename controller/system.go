@@ -27,7 +27,7 @@ func gateway(family int) (net.IP, error) {
 	cmdList := getCmdList(cmd)
 	out, err := exec.Command(execCmd, cmdList...).Output()
 	if err != nil {
-		return nil, fmt.Errorf("Failed to execute command: %s: %v", cmd, err)
+		return nil, fmt.Errorf("failed to execute command: %s: %v", cmd, err)
 	}
 	return net.ParseIP(strings.TrimSpace(string(out))), nil
 }
@@ -41,7 +41,7 @@ func via(dest net.IP) (net.IP, error) {
 	cmdList := getCmdList(cmd)
 	out, err := exec.Command(execCmd, cmdList...).Output()
 	if err != nil {
-		return nil, fmt.Errorf("Failed to execute command: %s: %v", cmd, err)
+		return nil, fmt.Errorf("failed to execute command: %s: %v", cmd, err)
 	}
 	if string(out) == "" {
 		// assume the provided dest is the next hop
@@ -63,7 +63,7 @@ func localAddress(gw net.IP) (net.IP, error) {
 			}
 		}
 	}
-	return nil, fmt.Errorf("Unable to find local address")
+	return nil, fmt.Errorf("unable to find local address")
 }
 
 func addLoopback(name string, addr *net.IPNet) error {
@@ -82,7 +82,7 @@ func addLoopback(name string, addr *net.IPNet) error {
 	cmdList := getCmdList(cmd)
 	_, err := exec.Command(execCmd, cmdList...).Output()
 	if err != nil {
-		return fmt.Errorf("Failed to Add loopback command: %s: %v", cmd, err)
+		return fmt.Errorf("failed to Add loopback command: %s: %v", cmd, err)
 	}
 	return nil
 }
@@ -97,7 +97,7 @@ func deleteLoopback(addr *net.IPNet) error {
 	cmdList := getCmdList(cmd)
 	_, err := exec.Command(execCmd, cmdList...).Output()
 	if err != nil {
-		return fmt.Errorf("Failed to delete loopback command: %s: %v", cmd, err)
+		return fmt.Errorf("failed to delete loopback command: %s: %v", cmd, err)
 	}
 	return nil
 }

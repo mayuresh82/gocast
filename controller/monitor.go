@@ -84,7 +84,7 @@ func NewMonitor(config *c.Config) *MonitorMgr {
 		cleanups: make(map[string]chan bool),
 	}
 	if config.Agent.ConsulAddr != "" {
-		cmon, err := NewConsulMon(config.Agent.ConsulAddr, config.Agent.ConsulToken)
+		cmon, err := NewConsulMon(config.Agent.ConsulAddr, config.Agent.ConsulToken, config.Agent.ConsulMatchTag)
 		if err != nil {
 			glog.Errorf("Failed to start consul monitor: %v", err)
 		} else {
@@ -184,7 +184,7 @@ func (m *MonitorMgr) Add(app *App) {
 }
 
 // Remove removes an app from monitor manager, stops BGP
-/// announcement and cleans up state
+// / announcement and cleans up state
 func (m *MonitorMgr) Remove(appName string) {
 	m.monMu.Lock()
 	defer m.monMu.Unlock()
