@@ -1,1 +1,4 @@
 .vscode
+
+# goreleaser dist file
+dist/

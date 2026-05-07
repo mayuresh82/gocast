@@ -1,0 +1,33 @@
+version: 2
+
+#before:
+#  hooks:
+#    - go mod tidy
+
+gomod:
+  # Use vendor directory
+  mod: "vendor"
+
+
+builds:
+  - id: gocast
+    binary: gocast
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - '386'
+      - amd64
+      - arm
+      - arm64
+    goarm:
+      - '6'
+      - '7'
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: gocast
+    ids:
+      - gocast
+
