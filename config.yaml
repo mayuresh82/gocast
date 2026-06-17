@@ -25,12 +25,14 @@ bgp:
   #    communities:
   #      - 100:100
   #      - 200:200
+  #    md5_env_var: GOCAST_BGP_PEER1_PASSWORD  # optional. Set via: export GOCAST_BGP_PEER1_PASSWORD="secret"
   #  - peer_ip: 10.10.10.2
   #    peer_as: 6789
   #    communities:
   #      - 100:101
   #      - 200:201
   #    multi_hop: true  # optional
+  #    md5_password: "secret123" # optional
   
   communities:
     - asn:nnnn

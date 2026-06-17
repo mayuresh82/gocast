@@ -488,3 +488,192 @@ func TestPeerInfoMultiplePeers(t *testing.T) {
 	a.True(peerAddrs["10.10.10.1"], "Should have first peer")
 	a.True(peerAddrs["10.10.10.2"], "Should have second peer")
 }
+
+func TestMD5Authentication(t *testing.T) {
+	a := assert.New(t)
+
+	testCases := []struct {
+		name           string
+		md5Password    string
+		md5EnvVar      string
+		envValue       string
+		expectedAuth   string
+	}{
+		{
+			name:         "MD5 password from config",
+			md5Password:  "secret123",
+			md5EnvVar:    "",
+			envValue:     "",
+			expectedAuth: "secret123",
+		},
+		{
+			name:         "MD5 password from environment variable",
+			md5Password:  "",
+			md5EnvVar:    "BGP_PEER_PASSWORD",
+			envValue:     "env_secret456",
+			expectedAuth: "env_secret456",
+		},
+		{
+			name:         "Environment variable takes priority over config",
+			md5Password:  "config_password",
+			md5EnvVar:    "BGP_PEER_PASSWORD",
+			envValue:     "env_password",
+			expectedAuth: "env_password",
+		},
+		{
+			name:         "No authentication when neither is set",
+			md5Password:  "",
+			md5EnvVar:    "",
+			envValue:     "",
+			expectedAuth: "",
+		},
+		{
+			name:         "Config password used when env var is set but empty",
+			md5Password:  "fallback_password",
+			md5EnvVar:    "EMPTY_VAR",
+			envValue:     "",
+			expectedAuth: "fallback_password",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Set environment variable if specified
+			if tc.md5EnvVar != "" && tc.envValue != "" {
+				os.Setenv(tc.md5EnvVar, tc.envValue)
+				defer os.Unsetenv(tc.md5EnvVar)
+			}
+
+			ctrl := &Controller{
+				localAS: 11111,
+				localIP: net.ParseIP("192.168.1.100"),
+				s:       gobgp.NewBgpServer(),
+			}
+			go ctrl.s.Serve()
+
+			if err := ctrl.s.StartBgp(context.Background(), &api.StartBgpRequest{
+				Global: &api.Global{
+					As:         uint32(11111),
+					RouterId:   ctrl.localIP.String(),
+					ListenPort: -1,
+				},
+			}); err != nil {
+				a.FailNow(err.Error())
+			}
+			defer ctrl.s.StopBgp(context.Background(), &api.StopBgpRequest{})
+
+			peer := &config.PeerConfig{
+				PeerIP:      "10.10.10.1",
+				PeerAS:      22222,
+				MD5Password: tc.md5Password,
+				MD5EnvVar:   tc.md5EnvVar,
+			}
+
+			err := ctrl.addPeer(peer)
+			a.NoError(err)
+
+			// Verify MD5 authentication is configured correctly
+			var foundPeer *api.Peer
+			ctrl.s.ListPeer(context.Background(), &api.ListPeerRequest{}, func(p *api.Peer) {
+				if p.Conf.NeighborAddress == peer.PeerIP {
+					foundPeer = p
+				}
+			})
+
+			a.NotNil(foundPeer, "Peer should be added")
+			a.Equal(tc.expectedAuth, foundPeer.Conf.AuthPassword, "MD5 password should match expected")
+		})
+	}
+}
+
+func TestGetMD5Password(t *testing.T) {
+	a := assert.New(t)
+
+	ctrl := &Controller{}
+
+	// Test 1: Environment variable takes priority
+	os.Setenv("TEST_BGP_PASS", "env_password")
+	defer os.Unsetenv("TEST_BGP_PASS")
+
+	peer := &config.PeerConfig{
+		MD5Password: "config_password",
+		MD5EnvVar:   "TEST_BGP_PASS",
+	}
+	a.Equal("env_password", ctrl.getMD5Password(peer))
+
+	// Test 2: Config password when env var not set
+	peer2 := &config.PeerConfig{
+		MD5Password: "config_only",
+		MD5EnvVar:   "NONEXISTENT_VAR",
+	}
+	a.Equal("config_only", ctrl.getMD5Password(peer2))
+
+	// Test 3: Empty string when nothing is set
+	peer3 := &config.PeerConfig{}
+	a.Equal("", ctrl.getMD5Password(peer3))
+
+	// Test 4: Only env var specified
+	os.Setenv("ANOTHER_PASS", "another_env_password")
+	defer os.Unsetenv("ANOTHER_PASS")
+
+	peer4 := &config.PeerConfig{
+		MD5EnvVar: "ANOTHER_PASS",
+	}
+	a.Equal("another_env_password", ctrl.getMD5Password(peer4))
+}
+
+func TestMultiPeerWithMD5(t *testing.T) {
+	a := assert.New(t)
+
+	// Set environment variables for testing
+	os.Setenv("PEER1_PASSWORD", "peer1_secret")
+	os.Setenv("PEER2_PASSWORD", "peer2_secret")
+	defer os.Unsetenv("PEER1_PASSWORD")
+	defer os.Unsetenv("PEER2_PASSWORD")
+
+	// Create controller with multiple peers using different MD5 configurations
+	multiPeerConfig := config.BgpConfig{
+		LocalAS: 11111,
+		LocalIP: "192.168.1.100",
+		Peers: []config.PeerConfig{
+			{
+				PeerIP:      "10.10.10.1",
+				PeerAS:      22222,
+				MD5EnvVar:   "PEER1_PASSWORD",
+			},
+			{
+				PeerIP:      "10.10.10.2",
+				PeerAS:      33333,
+				MD5Password: "peer2_config_password",
+			},
+			{
+				PeerIP:   "10.10.10.3",
+				PeerAS:   44444,
+				// No MD5 authentication
+			},
+		},
+		Origin: "igp",
+	}
+
+	ctrl, err := NewController(multiPeerConfig)
+	if err != nil {
+		a.FailNow(err.Error())
+	}
+	defer ctrl.Shutdown()
+
+	// Trigger peer addition by announcing a route (peers are added lazily)
+	_, ipnet, _ := net.ParseCIDR("20.30.40.0/24")
+	r := &Route{Net: ipnet}
+	ctrl.Announce(r)
+
+	// Verify all peers have correct MD5 configuration
+	peers := make(map[string]string) // map[peerIP]authPassword
+	ctrl.s.ListPeer(context.Background(), &api.ListPeerRequest{}, func(p *api.Peer) {
+		peers[p.Conf.NeighborAddress] = p.Conf.AuthPassword
+	})
+
+	a.Equal(3, len(peers), "Should have all three peers")
+	a.Equal("peer1_secret", peers["10.10.10.1"], "First peer should use env var password")
+	a.Equal("peer2_config_password", peers["10.10.10.2"], "Second peer should use config password")
+	a.Equal("", peers["10.10.10.3"], "Third peer should have no authentication")
+}

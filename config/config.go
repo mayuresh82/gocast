@@ -23,6 +23,8 @@ type PeerConfig struct {
 	PeerAS      int      `yaml:"peer_as"`
 	MultiHop    *bool    `yaml:"multi_hop,omitempty"`
 	Communities []string `yaml:"communities,omitempty"`
+	MD5Password string   `yaml:"md5_password,omitempty"`
+	MD5EnvVar   string   `yaml:"md5_env_var,omitempty"`
 }
 
 type BgpConfig struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 
@@ -120,7 +121,31 @@ func (c *Controller) addPeer(peer *c.PeerConfig) error {
 	if peer.MultiHop != nil && *peer.MultiHop {
 		n.EbgpMultihop = &api.EbgpMultihop{Enabled: true, MultihopTtl: uint32(255)}
 	}
+
+	// Configure MD5 authentication if specified
+	md5Password := c.getMD5Password(peer)
+	if md5Password != "" {
+		n.Conf.AuthPassword = md5Password
+	}
+
 	return c.s.AddPeer(context.Background(), &api.AddPeerRequest{Peer: n})
+}
+
+// getMD5Password retrieves the MD5 password from config or environment variable
+func (c *Controller) getMD5Password(peer *c.PeerConfig) string {
+	// Priority 1: Check for environment variable
+	if peer.MD5EnvVar != "" {
+		if password := os.Getenv(peer.MD5EnvVar); password != "" {
+			return password
+		}
+	}
+
+	// Priority 2: Use password from config file
+	if peer.MD5Password != "" {
+		return peer.MD5Password
+	}
+
+	return ""
 }
 
 func (c *Controller) getApiPath(route *Route, peer *c.PeerConfig) *api.Path {
