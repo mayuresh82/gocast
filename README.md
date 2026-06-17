@@ -63,6 +63,22 @@ Alternatively, if `gocast_nat=protocol:port` is specified, then GoCast will crea
 
 Example: `gocast_nat=tcp:53` and `gocast_nat=udp:53`
 
+## Configuration Reload
+
+GoCast supports dynamic configuration reloading without service restart. Send a `SIGHUP` signal to reload the configuration:
+
+```bash
+kill -HUP $(pidof gocast)
+```
+
+**What gets reloaded:**
+- BGP configuration (peers, AS numbers, MD5 passwords, communities)
+- Application definitions (add/remove/update apps)
+- Agent settings (Consul, timers, intervals)
+
+**Important:** Reloading BGP configuration causes existing BGP sessions to be restarted, resulting in brief routing interruption. Routes are automatically re-announced after reload.
+Consul-discovered apps are not removed during reload.
+
 ## Docker support
 The docker image at mayuresh82/gocast can be used to run GoCast inside a container. In order for GoCast to manipulate the host network stack correctly, the container needs to run with NET_ADMIN capablity and host mode networking. For example:
 ```
