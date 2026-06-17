@@ -18,11 +18,21 @@ type AgentConfig struct {
 	ConsulToken			string		  `yaml:"consul_token"`
 }
 
+type PeerConfig struct {
+	PeerIP      string   `yaml:"peer_ip"`
+	PeerAS      int      `yaml:"peer_as"`
+	MultiHop    *bool    `yaml:"multi_hop,omitempty"`
+	Communities []string `yaml:"communities,omitempty"`
+}
+
 type BgpConfig struct {
-	LocalAS     int    `yaml:"local_as"`
-	PeerAS      int    `yaml:"peer_as"`
-	LocalIP     string `yaml:"local_ip"`
-	PeerIP      string `yaml:"peer_ip"`
+	LocalAS     int          `yaml:"local_as"`
+	LocalIP     string       `yaml:"local_ip"`
+	// Legacy single-peer config (deprecated but supported for backward compatibility)
+	PeerAS      int          `yaml:"peer_as,omitempty"`
+	PeerIP      string       `yaml:"peer_ip,omitempty"`
+	// New multi-peer config
+	Peers       []PeerConfig `yaml:"peers,omitempty"`
 	Communities []string
 	Origin      string
 }
