@@ -11,6 +11,9 @@ agent:
   consul_query_interval: 5m
   # token to authenticate client if consul requires it
   consul_token: 00000000-0000-0000-0000-000000000000
+  # iptables binary to use for NAT rules (default: iptables)
+  # Use "iptables-nft" on modern systems with nftables
+  # iptables_binary: iptables-nft
 
 bgp:
   local_as: 12345

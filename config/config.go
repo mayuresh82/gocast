@@ -15,7 +15,8 @@ type AgentConfig struct {
 	CleanupTimer        time.Duration `yaml:"cleanup_timer"`
 	ConsulAddr          string        `yaml:"consul_addr"`
 	ConsulQueryInterval time.Duration `yaml:"consul_query_interval"`
-	ConsulToken			string		  `yaml:"consul_token"`
+	ConsulToken         string        `yaml:"consul_token"`
+	IptablesBinary      string        `yaml:"iptables_binary"`
 }
 
 type PeerConfig struct {

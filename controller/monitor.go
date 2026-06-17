@@ -98,6 +98,11 @@ func NewMonitor(config *c.Config) *MonitorMgr {
 	if config.Agent.CleanupTimer == 0 {
 		config.Agent.CleanupTimer = defaultCleanupTimer
 	}
+	// Set iptables binary (defaults to "iptables" if not specified)
+	if config.Agent.IptablesBinary == "" {
+		config.Agent.IptablesBinary = "iptables"
+	}
+	SetIptablesBinary(config.Agent.IptablesBinary)
 	mon.config = config
 	// add apps defined in config
 	for _, a := range config.Apps {
@@ -355,6 +360,15 @@ func (m *MonitorMgr) Reload(configPath string) error {
 	}
 	if newConfig.Agent.CleanupTimer == 0 {
 		newConfig.Agent.CleanupTimer = defaultCleanupTimer
+	}
+	if newConfig.Agent.IptablesBinary == "" {
+		newConfig.Agent.IptablesBinary = "iptables"
+	}
+
+	// Update iptables binary if changed
+	if m.config.Agent.IptablesBinary != newConfig.Agent.IptablesBinary {
+		glog.Infof("Iptables binary changed from %s to %s", m.config.Agent.IptablesBinary, newConfig.Agent.IptablesBinary)
+		SetIptablesBinary(newConfig.Agent.IptablesBinary)
 	}
 
 	// Check if BGP configuration has changed

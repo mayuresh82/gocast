@@ -74,10 +74,19 @@ kill -HUP $(pidof gocast)
 **What gets reloaded:**
 - BGP configuration (peers, AS numbers, MD5 passwords, communities)
 - Application definitions (add/remove/update apps)
-- Agent settings (Consul, timers, intervals)
+- Agent settings (Consul, timers, intervals, iptables binary)
 
 **Important:** Reloading BGP configuration causes existing BGP sessions to be restarted, resulting in brief routing interruption. Routes are automatically re-announced after reload.
 Consul-discovered apps are not removed during reload.
+
+## Iptables Configuration
+
+On modern Linux systems using nftables, you need to configure gocast to use `iptables-nft` instead of the legacy `iptables` binary (default):
+
+```yaml
+agent:
+  iptables_binary: iptables-nft
+```
 
 ## Docker support
 The docker image at mayuresh82/gocast can be used to run GoCast inside a container. In order for GoCast to manipulate the host network stack correctly, the container needs to run with NET_ADMIN capablity and host mode networking. For example:
