@@ -98,6 +98,11 @@ func NewMonitor(config *c.Config) *MonitorMgr {
 	if config.Agent.CleanupTimer == 0 {
 		config.Agent.CleanupTimer = defaultCleanupTimer
 	}
+	// Set iptables binary (defaults to "iptables" if not specified)
+	if config.Agent.IptablesBinary == "" {
+		config.Agent.IptablesBinary = "iptables"
+	}
+	SetIptablesBinary(config.Agent.IptablesBinary)
 	mon.config = config
 	// add apps defined in config
 	for _, a := range config.Apps {
@@ -339,6 +344,240 @@ func (m *MonitorMgr) CloseAll() {
 	}
 }
 
+// Reload re-reads the configuration file and applies changes
+func (m *MonitorMgr) Reload(configPath string) error {
+	glog.Infof("Reloading configuration from %s", configPath)
+
+	// Read new configuration
+	newConfig := c.GetConfig(configPath)
+	if newConfig == nil {
+		return fmt.Errorf("Failed to load configuration")
+	}
+
+	// Set defaults if not specified
+	if newConfig.Agent.MonitorInterval == 0 {
+		newConfig.Agent.MonitorInterval = defaultMonitorInterval
+	}
+	if newConfig.Agent.CleanupTimer == 0 {
+		newConfig.Agent.CleanupTimer = defaultCleanupTimer
+	}
+	if newConfig.Agent.IptablesBinary == "" {
+		newConfig.Agent.IptablesBinary = "iptables"
+	}
+
+	// Update iptables binary if changed
+	if m.config.Agent.IptablesBinary != newConfig.Agent.IptablesBinary {
+		glog.Infof("Iptables binary changed from %s to %s", m.config.Agent.IptablesBinary, newConfig.Agent.IptablesBinary)
+		SetIptablesBinary(newConfig.Agent.IptablesBinary)
+	}
+
+	// Check if BGP configuration has changed
+	bgpChanged := m.bgpConfigChanged(m.config.Bgp, newConfig.Bgp)
+
+	if bgpChanged {
+		glog.Infof("BGP configuration changed, restarting BGP controller")
+
+		// Withdraw all current routes before shutting down
+		m.monMu.Lock()
+		for _, am := range m.monitors {
+			if am.announced {
+				if err := m.ctrl.Withdraw(am.app.Vip); err != nil {
+					glog.Errorf("Failed to withdraw route during reload: %v", err)
+				}
+				am.announced = false
+			}
+		}
+		m.monMu.Unlock()
+
+		// Shutdown old BGP controller
+		if err := m.ctrl.Shutdown(); err != nil {
+			glog.Errorf("Failed to shutdown BGP controller: %v", err)
+		}
+
+		// Start new BGP controller
+		ctrl, err := NewController(newConfig.Bgp)
+		if err != nil {
+			return fmt.Errorf("Failed to start new BGP controller: %v", err)
+		}
+		m.ctrl = ctrl
+
+		// Re-announce all routes with new BGP config
+		m.monMu.Lock()
+		for _, am := range m.monitors {
+			// Only re-announce if the app was previously announced and is still healthy
+			if m.runMonitors(am.app) {
+				if err := m.ctrl.Announce(am.app.Vip); err != nil {
+					glog.Errorf("Failed to re-announce route %s: %v", am.app.Vip.Net.String(), err)
+				} else {
+					am.announced = true
+					glog.Infof("Re-announced route %s", am.app.Vip.Net.String())
+				}
+			}
+		}
+		m.monMu.Unlock()
+	}
+
+	// Handle consul configuration changes
+	if m.config.Agent.ConsulAddr != newConfig.Agent.ConsulAddr ||
+	   m.config.Agent.ConsulToken != newConfig.Agent.ConsulToken {
+		glog.Infof("Consul configuration changed")
+		if newConfig.Agent.ConsulAddr != "" {
+			cmon, err := NewConsulMon(newConfig.Agent.ConsulAddr, newConfig.Agent.ConsulToken)
+			if err != nil {
+				glog.Errorf("Failed to start consul monitor: %v", err)
+			} else {
+				m.consul = cmon
+				// Start consul monitoring in background if not already running
+				if m.config.Agent.ConsulAddr == "" {
+					go m.consulMon()
+				}
+			}
+		}
+	}
+
+	// Update agent configuration
+	oldConfig := m.config
+	m.config = newConfig
+
+	// Handle app configuration changes
+	m.reloadApps(oldConfig.Apps, newConfig.Apps)
+
+	glog.Infof("Configuration reloaded successfully")
+	return nil
+}
+
+// bgpConfigChanged checks if BGP configuration has changed
+func (m *MonitorMgr) bgpConfigChanged(old, new c.BgpConfig) bool {
+	// Check basic parameters
+	if old.LocalAS != new.LocalAS || old.LocalIP != new.LocalIP || old.Origin != new.Origin {
+		return true
+	}
+
+	// Check legacy peer config
+	if old.PeerAS != new.PeerAS || old.PeerIP != new.PeerIP {
+		return true
+	}
+
+	// Check peers
+	if len(old.Peers) != len(new.Peers) {
+		return true
+	}
+
+	// Compare each peer
+	for i := range old.Peers {
+		if old.Peers[i].PeerIP != new.Peers[i].PeerIP ||
+			old.Peers[i].PeerAS != new.Peers[i].PeerAS ||
+			old.Peers[i].MD5Password != new.Peers[i].MD5Password ||
+			old.Peers[i].MD5EnvVar != new.Peers[i].MD5EnvVar {
+			return true
+		}
+
+		// Check multi-hop
+		if (old.Peers[i].MultiHop == nil) != (new.Peers[i].MultiHop == nil) {
+			return true
+		}
+		if old.Peers[i].MultiHop != nil && new.Peers[i].MultiHop != nil {
+			if *old.Peers[i].MultiHop != *new.Peers[i].MultiHop {
+				return true
+			}
+		}
+
+		// Check communities
+		if len(old.Peers[i].Communities) != len(new.Peers[i].Communities) {
+			return true
+		}
+		for j := range old.Peers[i].Communities {
+			if old.Peers[i].Communities[j] != new.Peers[i].Communities[j] {
+				return true
+			}
+		}
+	}
+
+	// Check global communities
+	if len(old.Communities) != len(new.Communities) {
+		return true
+	}
+	for i := range old.Communities {
+		if old.Communities[i] != new.Communities[i] {
+			return true
+		}
+	}
+
+	return false
+}
+
+// reloadApps compares old and new app configurations and applies changes
+func (m *MonitorMgr) reloadApps(oldApps, newApps []c.AppConfig) {
+	// Build maps for easy comparison
+	oldAppMap := make(map[string]c.AppConfig)
+	for _, app := range oldApps {
+		oldAppMap[app.Name] = app
+	}
+
+	newAppMap := make(map[string]c.AppConfig)
+	for _, app := range newApps {
+		newAppMap[app.Name] = app
+	}
+
+	// Remove apps that are no longer in config
+	for name := range oldAppMap {
+		if _, exists := newAppMap[name]; !exists {
+			m.monMu.Lock()
+			if am, ok := m.monitors[name]; ok {
+				if am.app.Source == "config" {
+					glog.Infof("Removing app %s (no longer in config)", name)
+					m.monMu.Unlock()
+					m.Remove(name)
+					continue
+				}
+			}
+			m.monMu.Unlock()
+		}
+	}
+
+	// Add new apps or update existing ones
+	for name, newAppConfig := range newAppMap {
+		oldAppConfig, existed := oldAppMap[name]
+
+		// Check if app configuration changed
+		configChanged := !existed ||
+			oldAppConfig.Vip != newAppConfig.Vip ||
+			!equalStringSlices(oldAppConfig.Monitors, newAppConfig.Monitors) ||
+			!equalStringSlices(oldAppConfig.Nats, newAppConfig.Nats) ||
+			!equalStringSlices(oldAppConfig.VipConfig.BgpCommunities, newAppConfig.VipConfig.BgpCommunities)
+
+		if configChanged {
+			if existed {
+				glog.Infof("App %s configuration changed, reloading", name)
+				m.Remove(name)
+			} else {
+				glog.Infof("Adding new app %s from config", name)
+			}
+
+			app, err := NewApp(newAppConfig.Name, newAppConfig.Vip, newAppConfig.VipConfig,
+				newAppConfig.Monitors, newAppConfig.Nats, "config")
+			if err != nil {
+				glog.Errorf("Failed to add app %s: %v", name, err)
+				continue
+			}
+			m.Add(app)
+		}
+	}
+}
+
+// equalStringSlices compares two string slices
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // CleanUp periodically monitors for stale apps and cleans them up
 func (m *MonitorMgr) Cleanup(app string, exit chan bool) {
 	t := time.NewTimer(m.config.Agent.CleanupTimer)
@@ -356,6 +595,6 @@ func (m *MonitorMgr) Cleanup(app string, exit chan bool) {
 }
 
 // GetInfo returns basic BGP info for established peers
-func (m *MonitorMgr) GetInfo() (*api.Peer, error) {
+func (m *MonitorMgr) GetInfo() ([]*api.Peer, error) {
 	return m.ctrl.PeerInfo()
 }

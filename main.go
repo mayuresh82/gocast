@@ -33,7 +33,16 @@ func main() {
 	go func() {
 		for {
 			sig := <-signalChan
-			if sig == os.Interrupt || sig == syscall.SIGTERM {
+			switch sig {
+			case syscall.SIGHUP:
+				log.Info("Received SIGHUP, reloading configuration")
+				if err := mon.Reload(*config); err != nil {
+					log.Errorf("Failed to reload configuration: %v", err)
+				} else {
+					log.Info("Configuration reloaded successfully")
+				}
+			case os.Interrupt, syscall.SIGTERM:
+				log.Info("Received shutdown signal, cleaning up")
 				mon.CloseAll()
 				cancel()
 				return

@@ -8,6 +8,7 @@ import (
 )
 
 var execCmd = "bash"
+var iptablesBinary = "iptables"
 
 func getCmdList(mainCmd string) []string {
 	cmdList := []string{}
@@ -88,8 +89,8 @@ func deleteLoopback(addr *net.IPNet) error {
 
 func natRule(op string, vip, localAddr net.IP, protocol, lport, dport string) error {
 	cmd := fmt.Sprintf(
-		"iptables -t nat -%s PREROUTING -p %s -d %s --dport %s -j DNAT --to-destination %s:%s",
-		op, protocol, vip.String(), lport, localAddr.String(), dport,
+		"%s -t nat -%s PREROUTING -p %s -d %s --dport %s -j DNAT --to-destination %s:%s",
+		iptablesBinary, op, protocol, vip.String(), lport, localAddr.String(), dport,
 	)
 	cmdList := getCmdList(cmd)
 	_, err := exec.Command(execCmd, cmdList...).Output()
@@ -97,4 +98,11 @@ func natRule(op string, vip, localAddr net.IP, protocol, lport, dport string) er
 		return fmt.Errorf("Failed to %s nat rule: %s: %v", op, cmd, err)
 	}
 	return nil
+}
+
+// SetIptablesBinary sets the iptables binary to use for NAT rules
+func SetIptablesBinary(binary string) {
+	if binary != "" {
+		iptablesBinary = binary
+	}
 }

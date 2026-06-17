@@ -15,14 +15,27 @@ type AgentConfig struct {
 	CleanupTimer        time.Duration `yaml:"cleanup_timer"`
 	ConsulAddr          string        `yaml:"consul_addr"`
 	ConsulQueryInterval time.Duration `yaml:"consul_query_interval"`
-	ConsulToken			string		  `yaml:"consul_token"`
+	ConsulToken         string        `yaml:"consul_token"`
+	IptablesBinary      string        `yaml:"iptables_binary"`
+}
+
+type PeerConfig struct {
+	PeerIP      string   `yaml:"peer_ip"`
+	PeerAS      int      `yaml:"peer_as"`
+	MultiHop    *bool    `yaml:"multi_hop,omitempty"`
+	Communities []string `yaml:"communities,omitempty"`
+	MD5Password string   `yaml:"md5_password,omitempty"`
+	MD5EnvVar   string   `yaml:"md5_env_var,omitempty"`
 }
 
 type BgpConfig struct {
-	LocalAS     int    `yaml:"local_as"`
-	PeerAS      int    `yaml:"peer_as"`
-	LocalIP     string `yaml:"local_ip"`
-	PeerIP      string `yaml:"peer_ip"`
+	LocalAS     int          `yaml:"local_as"`
+	LocalIP     string       `yaml:"local_ip"`
+	// Legacy single-peer config (deprecated but supported for backward compatibility)
+	PeerAS      int          `yaml:"peer_as,omitempty"`
+	PeerIP      string       `yaml:"peer_ip,omitempty"`
+	// New multi-peer config
+	Peers       []PeerConfig `yaml:"peers,omitempty"`
 	Communities []string
 	Origin      string
 }
