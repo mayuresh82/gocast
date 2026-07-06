@@ -1,4 +1,4 @@
-FROM golang:1.14-alpine as builder
+FROM golang:1.25-alpine AS builder
 RUN apk update && \
     apk upgrade && \
     apk add --no-cache git && \
@@ -11,6 +11,8 @@ COPY . /go/src/github.com/mayuresh82/gocast
 WORKDIR /go/src/github.com/mayuresh82/gocast
 
 RUN make linux
+ENV GOCACHE=/root/.cache/go-build
+RUN --mount=type=cache,target="/root/.cache/go-build" make linux
 
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates bash iptables netcat-openbsd sudo
