@@ -15,7 +15,17 @@ type AgentConfig struct {
 	CleanupTimer        time.Duration `yaml:"cleanup_timer"`
 	ConsulAddr          string        `yaml:"consul_addr"`
 	ConsulQueryInterval time.Duration `yaml:"consul_query_interval"`
-	ConsulToken			string		  `yaml:"consul_token"`
+	ConsulToken         string        `yaml:"consul_token"`
+	Nomad               NomadConfig   `yaml:"nomad"`
+}
+
+type NomadConfig struct {
+	Enabled       bool          `yaml:"enabled,omitempty"`
+	Addr          string        `yaml:"addr,omitempty"`
+	Namespace     string        `yaml:"namespace,omitempty"`
+	NodeID        string        `yaml:"node_id,omitempty"`
+	Token         string        `yaml:"token,omitempty"`
+	QueryInterval time.Duration `yaml:"query_interval,omitempty"`
 }
 
 type BgpConfig struct {

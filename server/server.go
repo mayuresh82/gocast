@@ -3,11 +3,13 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/golang/glog"
+
 	"github.com/mayuresh82/gocast/config"
 	"github.com/mayuresh82/gocast/controller"
 )
@@ -27,10 +29,11 @@ func NewServer(addr string, mon *controller.MonitorMgr) *Server {
 
 func (s *Server) Serve(ctx context.Context) {
 	glog.Infof("Starting http server on %s", s.ListenAddr)
-	http.HandleFunc("/register", s.registerHandler)
-	http.HandleFunc("/unregister", s.unregisterHandler)
-	http.HandleFunc("/info", s.infoHandler)
-	srv := &http.Server{Addr: s.ListenAddr}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/register", s.registerHandler)
+	mux.HandleFunc("/unregister", s.unregisterHandler)
+	mux.HandleFunc("/info", s.infoHandler)
+	srv := &http.Server{Addr: s.ListenAddr, Handler: mux}
 	idleConnsClosed := make(chan struct{})
 	go func() {
 		<-ctx.Done()
@@ -40,7 +43,7 @@ func (s *Server) Serve(ctx context.Context) {
 		}
 		close(idleConnsClosed)
 	}()
-	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		// Error starting or closing listener
 		glog.Errorf("HTTP server ListenAndServe Error: %v", err)
 	}

@@ -1,4 +1,4 @@
-FROM golang:1.14-alpine as builder
+FROM golang:1.25-alpine AS builder
 RUN apk update && \
     apk upgrade && \
     apk add --no-cache git && \
@@ -13,10 +13,12 @@ WORKDIR /go/src/github.com/mayuresh82/gocast
 RUN make linux
 
 FROM alpine:latest
-RUN apk --no-cache add ca-certificates bash iptables netcat-openbsd sudo
 WORKDIR /root/
-COPY --from=builder /go/src/github.com/mayuresh82/gocast .
+
+RUN apk --no-cache add ca-certificates bash iptables netcat-openbsd sudo
+
+COPY --from=builder /go/src/github.com/mayuresh82/gocast/gocast /bin/
 
 EXPOSE 8080/tcp
 
-ENTRYPOINT ["./gocast"]
+ENTRYPOINT ["/bin/gocast"]

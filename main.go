@@ -3,26 +3,29 @@ package main
 import (
 	"context"
 	"flag"
-	"github.com/golang/glog"
-	c "github.com/mayuresh82/gocast/config"
-	"github.com/mayuresh82/gocast/controller"
-	"github.com/mayuresh82/gocast/server"
-	log "github.com/sirupsen/logrus"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/golang/glog"
+	log "github.com/sirupsen/logrus"
+
+	c "github.com/mayuresh82/gocast/config"
+	"github.com/mayuresh82/gocast/controller"
+	"github.com/mayuresh82/gocast/server"
 )
 
 var (
-	config = flag.String("config", "", "Path to config file")
+	configFilePath = flag.String("config", "", "Path to config file")
 )
 
 func main() {
+	_ = flag.Set("logtostderr", "true")
 	flag.Parse()
 	if glog.V(4) {
 		log.SetLevel(log.DebugLevel)
 	}
-	conf := c.GetConfig(*config)
+	conf := c.GetConfig(*configFilePath)
 	mon := controller.NewMonitor(conf)
 	srv := server.NewServer(conf.Agent.ListenAddr, mon)
 

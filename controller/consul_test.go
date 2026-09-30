@@ -7,8 +7,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/mayuresh82/gocast/config"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/mayuresh82/gocast/config"
 )
 
 var mockConsulData = map[string]string{
@@ -81,9 +82,9 @@ type MockClient struct {
 	do func(*http.Request) (*http.Response, error)
 }
 
-func (c *MockClient) Do(*http.Request) (*http.Response, error) {
+func (c *MockClient) Do(r *http.Request) (*http.Response, error) {
 	if c.do != nil {
-		return c.do(&http.Request{})
+		return c.do(r)
 	}
 	return nil, nil
 }
@@ -115,7 +116,7 @@ func TestGetNewHTTPReq(t *testing.T) {
 	a.Equal(req.Header.Get("X-Consul-Token"), "")
 }
 
-func TestQueryServices(t *testing.T) {
+func TestConsulQueryServices(t *testing.T) {
 	a := assert.New(t)
 	client := &MockClient{}
 	cm := &ConsulMon{

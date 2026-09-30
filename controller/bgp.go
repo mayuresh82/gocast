@@ -7,11 +7,13 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/golang/glog"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/ptypes/any"
-	c "github.com/mayuresh82/gocast/config"
 	api "github.com/osrg/gobgp/api"
 	gobgp "github.com/osrg/gobgp/pkg/server"
+
+	"github.com/mayuresh82/gocast/config"
 )
 
 type Route struct {
@@ -28,33 +30,33 @@ type Controller struct {
 	s               *gobgp.BgpServer
 }
 
-func NewController(config c.BgpConfig) (*Controller, error) {
+func NewController(bgpConfig config.BgpConfig) (*Controller, error) {
 	c := &Controller{}
-	var gw net.IP
-	var err error
-	if config.PeerIP == "" {
+	if bgpConfig.PeerIP == "" {
 		gw, err := gateway()
 		if err != nil {
-			return nil, fmt.Errorf("Unable to get gw ip: %v", err)
+			return nil, fmt.Errorf("unable to get gw ip: %v", err)
 		}
 		c.peerIP = gw
 	} else {
-		c.peerIP = net.ParseIP(config.PeerIP)
+		c.peerIP = net.ParseIP(bgpConfig.PeerIP)
 	}
-	if config.LocalIP == "" {
-		gw, err = via(c.peerIP)
+	if bgpConfig.LocalIP == "" {
+		gw, err := via(c.peerIP)
+		glog.Infof("via: gw %q - err %v", gw, err)
 		if err != nil {
-			return nil, fmt.Errorf("Unable to get gw ip: %v", err)
+			return nil, fmt.Errorf("unable to get gw ip: %v", err)
 		}
 		c.localIP, err = localAddress(gw)
+		glog.Infof("via: local %q - err %v", c.localIP, err)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		c.localIP = net.ParseIP(config.LocalIP)
+		c.localIP = net.ParseIP(bgpConfig.LocalIP)
 	}
-	c.communities = config.Communities
-	switch config.Origin {
+	c.communities = bgpConfig.Communities
+	switch bgpConfig.Origin {
 	case "igp":
 		c.origin = 0
 	case "egp":
@@ -66,19 +68,20 @@ func NewController(config c.BgpConfig) (*Controller, error) {
 	go s.Serve()
 	if err := s.StartBgp(context.Background(), &api.StartBgpRequest{
 		Global: &api.Global{
-			As:         uint32(config.LocalAS),
+			As:         uint32(bgpConfig.LocalAS),
 			RouterId:   c.localIP.String(),
 			ListenPort: -1, // gobgp won't listen on tcp:179
 		},
 	}); err != nil {
-		return nil, fmt.Errorf("Unable to start bgp: %v", err)
+		return nil, fmt.Errorf("unable to start bgp: %v", err)
 	}
 	c.s = s
-	c.peerAS = config.PeerAS
+	c.peerAS = bgpConfig.PeerAS
 	// set mh by default for all ebgp peers
-	if c.peerAS != config.LocalAS {
+	if c.peerAS != bgpConfig.LocalAS {
 		c.multiHop = true
 	}
+
 	return c, nil
 }
 
@@ -96,6 +99,8 @@ func (c *Controller) AddPeer(peer string) error {
 }
 
 func (c *Controller) getApiPath(route *Route) *api.Path {
+	attrs := make([]*any.Any, 2, 3)
+
 	afi := api.Family_AFI_IP
 	if route.Net.IP.To4() == nil {
 		afi = api.Family_AFI_IP6
@@ -105,20 +110,22 @@ func (c *Controller) getApiPath(route *Route) *api.Path {
 		Prefix:    route.Net.IP.String(),
 		PrefixLen: uint32(prefixlen),
 	})
-	a1, _ := ptypes.MarshalAny(&api.OriginAttribute{
+	attrs[0], _ = ptypes.MarshalAny(&api.OriginAttribute{
 		Origin: c.origin,
 	})
-	a2, _ := ptypes.MarshalAny(&api.NextHopAttribute{
+	attrs[1], _ = ptypes.MarshalAny(&api.NextHopAttribute{
 		NextHop: c.localIP.String(),
 	})
 	var communities []uint32
 	for _, comm := range append(c.communities, route.Communities...) {
 		communities = append(communities, convertCommunity(comm))
 	}
-	a3, _ := ptypes.MarshalAny(&api.CommunitiesAttribute{
-		Communities: communities,
-	})
-	attrs := []*any.Any{a1, a2, a3}
+	if len(communities) > 0 {
+		a3, _ := ptypes.MarshalAny(&api.CommunitiesAttribute{
+			Communities: communities,
+		})
+		attrs = append(attrs, a3)
+	}
 	return &api.Path{
 		Family: &api.Family{Afi: afi, Safi: api.Family_SAFI_UNICAST},
 		Nlri:   nlri,

@@ -3,9 +3,11 @@ package controller
 import (
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 
 	"github.com/golang/glog"
+
 	"github.com/mayuresh82/gocast/config"
 )
 
@@ -50,40 +52,32 @@ func (m Monitors) Contains(elem *Monitor) bool {
 	return false
 }
 
+type AppSource string
+
+const (
+	nomadAppSource  AppSource = "nomad"
+	consulAppSource AppSource = "consul"
+)
+
 type App struct {
 	Name      string
 	Vip       *Route
 	VipConfig config.VipConfig
 	Monitors  Monitors
 	Nats      []string
-	Source    string
+	Source    AppSource
 }
 
-func (a *App) Equal(other *App) bool {
-	if len(a.Monitors) != len(other.Monitors) {
-		return false
-	}
-	for _, m := range other.Monitors {
-		if !a.Monitors.Contains(m) {
-			return false
-		}
-	}
-	return a.Name == other.Name && a.Vip.Net.String() == other.Vip.Net.String()
-}
-
-func (a *App) String() string {
-	return fmt.Sprintf("Name: %s, Vip: %s, VipConf: %v, Monitors: %v, Nats: %v, Source: %s",
-		a.Name, a.Vip.Net.String(), a.VipConfig, a.Monitors, a.Nats, a.Source)
-}
-
-func NewApp(appName, vip string, vipConfig config.VipConfig, monitors []string, nats []string, source string) (*App, error) {
+func NewApp(appName, vip string, vipConfig config.VipConfig, monitors []string, nats []string, source AppSource) (*App, error) {
 	if appName == "" {
-		return nil, fmt.Errorf("Invalid app name")
+		return nil, fmt.Errorf("invalid app name")
 	}
+	nats = slices.Clone(nats)
+	slices.Sort(nats)
 	app := &App{Name: appName, Nats: nats, Source: source}
 	_, ipnet, err := net.ParseCIDR(vip)
 	if err != nil {
-		return nil, fmt.Errorf("Invalid VIP specified, need ip/mask")
+		return nil, fmt.Errorf("invalid VIP specified, need ip/mask")
 	}
 	app.Vip = &Route{Net: ipnet, Communities: vipConfig.BgpCommunities}
 	app.VipConfig = vipConfig
@@ -95,13 +89,13 @@ func NewApp(appName, vip string, vipConfig config.VipConfig, monitors []string, 
 		switch mon.Type.String() {
 		case "port":
 			if len(parts) != 3 {
-				return nil, fmt.Errorf("Invalid port monitor, must specify proto:port")
+				return nil, fmt.Errorf("invalid port monitor, must specify proto:port")
 			}
 			mon.Protocol = parts[1]
 			mon.Port = parts[2]
 		case "exec":
 			if len(parts) != 2 {
-				return nil, fmt.Errorf("Invalid exec monitor, must specify command")
+				return nil, fmt.Errorf("invalid exec monitor, must specify command")
 			}
 			mon.Cmd = parts[1]
 		case "consul":
@@ -112,4 +106,55 @@ func NewApp(appName, vip string, vipConfig config.VipConfig, monitors []string, 
 		app.Monitors = append(app.Monitors, mon)
 	}
 	return app, nil
+}
+
+func (a *App) Equal(other *App) bool {
+	if a == nil && other == nil {
+		return true
+	}
+	if a == nil || other == nil {
+		// if one is nil, then the other isn't
+		// (otherwise it would have hit the previous if statement)
+		return false
+	}
+	if len(a.Monitors) != len(other.Monitors) {
+		return false
+	}
+	for _, m := range other.Monitors {
+		if !a.Monitors.Contains(m) {
+			return false
+		}
+	}
+	return a.Name == other.Name &&
+		a.Vip.Net.String() == other.Vip.Net.String() &&
+		a.Source == other.Source
+}
+
+func (a *App) NatEqual(other *App) bool {
+	if a == nil && other == nil {
+		return true
+	}
+	if a == nil || other == nil {
+		// if one is nil, then the other isn't
+		// (otherwise it would have hit the previous if statement)
+		return false
+	}
+	if len(a.Nats) != len(other.Nats) {
+		return false
+	}
+	for i := range a.Nats {
+		if a.Nats[i] != other.Nats[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (a *App) FullName() string {
+	return fmt.Sprintf("%s@%s", a.Name, a.Source)
+}
+
+func (a *App) String() string {
+	return fmt.Sprintf("Name: %s, Vip: %s, VipConf: %v, Monitors: %v, Nats: %v, Source: %s",
+		a.Name, a.Vip.Net.String(), a.VipConfig, a.Monitors, a.Nats, a.Source)
 }

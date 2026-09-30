@@ -8,10 +8,11 @@ import (
 	"testing"
 
 	"github.com/golang/protobuf/ptypes"
-	"github.com/mayuresh82/gocast/config"
 	api "github.com/osrg/gobgp/api"
 	gobgp "github.com/osrg/gobgp/pkg/server"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/mayuresh82/gocast/config"
 )
 
 type BgpListener struct {

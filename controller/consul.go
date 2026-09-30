@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+
 	"github.com/mayuresh82/gocast/config"
 )
 
@@ -55,7 +56,7 @@ func contains(inp []string, elem string) bool {
 	return false
 }
 
-func NewConsulMon(addr string, token string) (*ConsulMon, error) {
+func NewConsulMonitor(addr string, token string) (*ConsulMon, error) {
 	node := os.Getenv(consulNodeEnv)
 	if node == "" {
 		return nil, fmt.Errorf("%s env variable not set", consulNodeEnv)
@@ -108,7 +109,7 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 		)
 		var vipConf config.VipConfig
 		for _, tag := range service.Tags {
-			// try to find the requires tags. Only vip is mandatory
+			// try to find the required tags. Only vip is mandatory
 			parts := strings.Split(tag, "=")
 			if len(parts) != 2 {
 				continue
@@ -128,7 +129,8 @@ func (c *ConsulMon) queryServices() ([]*App, error) {
 			glog.Errorf("No vip Tag found in matched service :%s", service.Service)
 			continue
 		}
-		app, err := NewApp(service.Service, vip, vipConf, monitors, nats, "consul")
+
+		app, err := NewApp(service.Service, vip, vipConf, monitors, nats, consulAppSource)
 		if err != nil {
 			glog.Errorf("Unable to add consul app: %v", err)
 			continue

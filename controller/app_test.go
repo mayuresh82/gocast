@@ -1,10 +1,12 @@
 package controller
 
 import (
+	"net"
 	"testing"
 
-	"github.com/mayuresh82/gocast/config"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/mayuresh82/gocast/config"
 )
 
 func TestAppParsing(t *testing.T) {
@@ -35,4 +37,22 @@ func TestAppParsing(t *testing.T) {
 
 	_, err = NewApp("app4", "4.4.4.4/32", config.VipConfig{}, []string{"port:abcd::1023"}, []string{}, "")
 	a.NotNil(err)
+}
+
+func TestEquality(t *testing.T) {
+	a := assert.New(t)
+
+	app1, err := NewApp("app1", "1.1.1.1/32", config.VipConfig{}, []string{"port:tcp:123"}, []string{}, "")
+	a.Nil(err)
+	app2, err := NewApp("app1", "1.1.1.1/32", config.VipConfig{}, []string{"port:tcp:123"}, []string{}, "")
+	a.Nil(err)
+	app2.Endpoint.port = 12345
+	app3, err := NewApp("app1", "1.1.1.1/32", config.VipConfig{}, []string{"port:tcp:123"}, []string{}, "source")
+	a.Nil(err)
+	app3.Endpoint.ip = net.IPv4(127, 0, 0, 1)
+
+	a.True(app1.Equal(app2))
+	a.False(app1.EndpointEqual(app2))
+	a.False(app1.Equal(app3))
+	a.False(app1.EndpointEqual(app3))
 }
