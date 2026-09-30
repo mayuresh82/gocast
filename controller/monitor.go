@@ -190,7 +190,6 @@ func (m *MonitorMgr) Add(app *App) {
 	var existing *appMon
 	// check if already running
 	for appMon := range m.Monitors() {
-		// TODO properly handle a situation where multiple apps try to claim the same ip/port pair
 		if appMon.app.Equal(app) {
 			glog.V(2).Infof("App %s already exists, looking if replacement is necessary", appMon.app.FullName())
 			existing = appMon

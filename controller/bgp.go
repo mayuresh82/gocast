@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/golang/glog"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/ptypes/any"
 	api "github.com/osrg/gobgp/api"
@@ -31,23 +32,23 @@ type Controller struct {
 
 func NewController(bgpConfig config.BgpConfig) (*Controller, error) {
 	c := &Controller{}
-	var gw net.IP
-	var err error
 	if bgpConfig.PeerIP == "" {
 		gw, err := gateway()
 		if err != nil {
-			return nil, fmt.Errorf("Unable to get gw ip: %v", err)
+			return nil, fmt.Errorf("unable to get gw ip: %v", err)
 		}
 		c.peerIP = gw
 	} else {
 		c.peerIP = net.ParseIP(bgpConfig.PeerIP)
 	}
 	if bgpConfig.LocalIP == "" {
-		gw, err = via(c.peerIP)
+		gw, err := via(c.peerIP)
+		glog.Infof("via: gw %q - err %v", gw, err)
 		if err != nil {
-			return nil, fmt.Errorf("Unable to get gw ip: %v", err)
+			return nil, fmt.Errorf("unable to get gw ip: %v", err)
 		}
 		c.localIP, err = localAddress(gw)
+		glog.Infof("via: local %q - err %v", c.localIP, err)
 		if err != nil {
 			return nil, err
 		}
@@ -72,7 +73,7 @@ func NewController(bgpConfig config.BgpConfig) (*Controller, error) {
 			ListenPort: -1, // gobgp won't listen on tcp:179
 		},
 	}); err != nil {
-		return nil, fmt.Errorf("Unable to start bgp: %v", err)
+		return nil, fmt.Errorf("unable to start bgp: %v", err)
 	}
 	c.s = s
 	c.peerAS = bgpConfig.PeerAS
@@ -80,6 +81,7 @@ func NewController(bgpConfig config.BgpConfig) (*Controller, error) {
 	if c.peerAS != bgpConfig.LocalAS {
 		c.multiHop = true
 	}
+
 	return c, nil
 }
 
