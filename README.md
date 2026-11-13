@@ -24,7 +24,23 @@ GoCast uses [GoBGP](https://github.com/osrg/gobgp) as a library to peer with rem
 Typically you would run GoCast on the same hosts as the service that needs to be monitored.
 Once an application "registers" with GoCast, GoCast then runs the predefined health monitors/checks and if they fail (e.g a service listening on a specific port), the routes are withdrawn thereby taking the node out of service.
 
-GoCast uses a config file to define agent parameters (http addr, consul server addr, timers etc) and BGP parameters (local/peer ASN, peer IP, origin/communnities). See example config.yaml.
+GoCast uses a config file to define agent parameters (http addr, consul server addr, timers etc) and BGP parameters (local/peer ASN, peer IP(s), origin/communnities). See example config.yaml.
+
+By default `bgp.peer_ip` configures a single BGP peer. To peer with more than one BGP speaker at once (eg. redundant route servers/TORs), set `bgp.peer_ips` instead:
+
+```yaml
+bgp:
+  local_as: 65010
+  peer_as: 65000
+  local_ip: 10.1.10.11
+  peer_ips:
+    - 10.1.0.11
+    - 10.1.0.12
+```
+
+All configured peers are expected to share `peer_as`. GoCast establishes a session to each one and announces/withdraws routes to all of them together, there's no way to target a route at a single peer. `peer_ip` still works for existing single-peer configs; if both `peer_ip` and `peer_ips` are set, `peer_ip` is just treated as one more entry in the peer list.
+
+Note: the `/info` endpoint now returns a JSON array with one entry per configured peer, instead of a single peer object.
 
 ### Registration
 An application can register with the GoCast instance running on the same host using one of the following methods:

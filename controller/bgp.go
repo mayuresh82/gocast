@@ -20,36 +20,65 @@ type Route struct {
 }
 
 type Controller struct {
-	peerAS          int
-	localIP, peerIP net.IP
-	communities     []string
-	origin          uint32
-	multiHop        bool
-	s               *gobgp.BgpServer
+	peerAS      int
+	localIP     net.IP
+	peerIPs     []net.IP
+	communities []string
+	origin      uint32
+	multiHop    bool
+	s           *gobgp.BgpServer
+}
+
+// peerAddrs collects the configured peer IPs from both the legacy singular
+// PeerIP field and the PeerIPs list, de-duplicated and in a stable order.
+func peerAddrs(config c.BgpConfig) []string {
+	var addrs []string
+	seen := make(map[string]bool)
+	add := func(addr string) {
+		if addr == "" || seen[addr] {
+			return
+		}
+		seen[addr] = true
+		addrs = append(addrs, addr)
+	}
+	add(config.PeerIP)
+	for _, addr := range config.PeerIPs {
+		add(addr)
+	}
+	return addrs
 }
 
 func NewController(config c.BgpConfig) (*Controller, error) {
 	c := &Controller{}
-	var gw net.IP
-	var err error
-	if config.PeerIP == "" {
+	addrs := peerAddrs(config)
+	if len(addrs) == 0 {
 		gw, err := gateway()
 		if err != nil {
 			return nil, fmt.Errorf("Unable to get gw ip: %v", err)
 		}
-		c.peerIP = gw
+		c.peerIPs = []net.IP{gw}
 	} else {
-		c.peerIP = net.ParseIP(config.PeerIP)
+		for _, addr := range addrs {
+			ip := net.ParseIP(addr)
+			if ip == nil {
+				return nil, fmt.Errorf("Invalid peer ip: %q", addr)
+			}
+			c.peerIPs = append(c.peerIPs, ip)
+		}
 	}
 	if config.LocalIP == "" {
-		gw, err = via(c.peerIP)
+		// derive the local address from the route to the first configured
+		// peer. When peering with multiple route servers reachable via
+		// different local interfaces, set local_ip explicitly instead.
+		gw, err := via(c.peerIPs[0])
 		if err != nil {
 			return nil, fmt.Errorf("Unable to get gw ip: %v", err)
 		}
-		c.localIP, err = localAddress(gw)
+		localIP, err := localAddress(gw)
 		if err != nil {
 			return nil, err
 		}
+		c.localIP = localIP
 	} else {
 		c.localIP = net.ParseIP(config.LocalIP)
 	}
@@ -126,52 +155,90 @@ func (c *Controller) getApiPath(route *Route) *api.Path {
 	}
 }
 
-func (c *Controller) Announce(route *Route) error {
-	var found bool
+// ensurePeers makes sure every configured peer IP is an established (or
+// pending) GoBGP neighbor. It is safe to call repeatedly; peers already
+// added are left alone. A peer that fails to add does not stop the others
+// from being added; the first such error is returned.
+func (c *Controller) ensurePeers() error {
+	established := make(map[string]bool)
 	err := c.s.ListPeer(context.Background(), &api.ListPeerRequest{}, func(p *api.Peer) {
-		if p.Conf.NeighborAddress == c.peerIP.String() {
-			found = true
-		}
+		established[p.Conf.NeighborAddress] = true
 	})
 	if err != nil {
 		return err
 	}
-	if !found {
-		if err := c.AddPeer(c.peerIP.String()); err != nil {
-			return err
+	var addErr error
+	for _, peerIP := range c.peerIPs {
+		if established[peerIP.String()] {
+			continue
+		}
+		if err := c.AddPeer(peerIP.String()); err != nil && addErr == nil {
+			addErr = fmt.Errorf("Unable to add peer %s: %v", peerIP, err)
 		}
 	}
-	_, err = c.s.AddPath(context.Background(), &api.AddPathRequest{Path: c.getApiPath(route)})
-	return err
+	return addErr
+}
+
+// Announce adds the route to the local RIB. GoBGP advertises paths in the
+// RIB to every established peer on its own, so one AddPath call reaches all
+// configured peers, there is no per-peer targeting to do here. The route is
+// added even if some peers failed to add, so one bad peer doesn't block the
+// announcement to the rest; the peer error is still returned.
+func (c *Controller) Announce(route *Route) error {
+	peerErr := c.ensurePeers()
+	if _, err := c.s.AddPath(context.Background(), &api.AddPathRequest{Path: c.getApiPath(route)}); err != nil {
+		return err
+	}
+	return peerErr
 }
 
 func (c *Controller) Withdraw(route *Route) error {
 	return c.s.DeletePath(context.Background(), &api.DeletePathRequest{Path: c.getApiPath(route)})
 }
 
-func (c *Controller) PeerInfo() (*api.Peer, error) {
-	var peer *api.Peer
+// PeerInfo returns BGP session info for every configured peer.
+func (c *Controller) PeerInfo() ([]*api.Peer, error) {
+	want := make(map[string]bool)
+	for _, peerIP := range c.peerIPs {
+		want[peerIP.String()] = true
+	}
+	var peers []*api.Peer
 	err := c.s.ListPeer(context.Background(), &api.ListPeerRequest{}, func(p *api.Peer) {
-		if p.Conf.NeighborAddress == c.peerIP.String() {
-			peer = p
+		if want[p.Conf.NeighborAddress] {
+			peers = append(peers, p)
 		}
 	})
 	if err != nil {
 		return nil, err
 	}
-	return peer, nil
+	return peers, nil
 }
 
+// Shutdown gracefully shuts down every established peer session and stops
+// the local BGP server. Only peers GoBGP knows about are shut down, since
+// ShutdownPeer errors on a peer that was never added (eg. no route was ever
+// announced). StopBgp always runs, even if listing or shutting down peers
+// fails, so the local server is never left running; the first error is
+// returned.
 func (c *Controller) Shutdown() error {
-	if err := c.s.ShutdownPeer(context.Background(), &api.ShutdownPeerRequest{
-		Address: c.peerIP.String(),
-	}); err != nil {
-		return err
+	established := make(map[string]bool)
+	shutdownErr := c.s.ListPeer(context.Background(), &api.ListPeerRequest{}, func(p *api.Peer) {
+		established[p.Conf.NeighborAddress] = true
+	})
+	for _, peerIP := range c.peerIPs {
+		if !established[peerIP.String()] {
+			continue
+		}
+		if err := c.s.ShutdownPeer(context.Background(), &api.ShutdownPeerRequest{
+			Address: peerIP.String(),
+		}); err != nil && shutdownErr == nil {
+			shutdownErr = err
+		}
 	}
 	if err := c.s.StopBgp(context.Background(), &api.StopBgpRequest{}); err != nil {
 		return err
 	}
-	return nil
+	return shutdownErr
 }
 
 func convertCommunity(comm string) uint32 {

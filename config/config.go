@@ -19,10 +19,15 @@ type AgentConfig struct {
 }
 
 type BgpConfig struct {
-	LocalAS     int    `yaml:"local_as"`
-	PeerAS      int    `yaml:"peer_as"`
-	LocalIP     string `yaml:"local_ip"`
-	PeerIP      string `yaml:"peer_ip"`
+	LocalAS int    `yaml:"local_as"`
+	PeerAS  int    `yaml:"peer_as"`
+	LocalIP string `yaml:"local_ip"`
+	// PeerIP is kept for backwards compatibility with existing single-peer
+	// configs. New configs that need to peer with more than one BGP speaker
+	// (eg. redundant route servers) should use PeerIPs instead. If both are
+	// set, PeerIP is treated as one more entry in the peer list.
+	PeerIP      string   `yaml:"peer_ip"`
+	PeerIPs     []string `yaml:"peer_ips"`
 	Communities []string
 	Origin      string
 }
