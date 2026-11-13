@@ -72,11 +72,11 @@ func (s *Server) unregisterHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) infoHandler(w http.ResponseWriter, r *http.Request) {
-	peer, err := s.mon.GetInfo()
+	peers, err := s.mon.GetInfo()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Internal error getting peers: %v", err), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(peer)
+	json.NewEncoder(w).Encode(peers)
 }

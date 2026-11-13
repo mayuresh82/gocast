@@ -17,6 +17,10 @@ bgp:
   remote_as: 6789
   # override the peer IP to use instead of auto discovering
   peer_ip: 10.10.10.1
+  # to peer with more than one BGP speaker at once, use peer_ips instead:
+  # peer_ips:
+  #   - 10.10.10.1
+  #   - 10.10.10.2
   communities:
     - asn:nnnn
     - asn:nnnn

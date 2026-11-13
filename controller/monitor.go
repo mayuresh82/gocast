@@ -355,7 +355,7 @@ func (m *MonitorMgr) Cleanup(app string, exit chan bool) {
 	}
 }
 
-// GetInfo returns basic BGP info for established peers
-func (m *MonitorMgr) GetInfo() (*api.Peer, error) {
+// GetInfo returns basic BGP info for every configured peer
+func (m *MonitorMgr) GetInfo() ([]*api.Peer, error) {
 	return m.ctrl.PeerInfo()
 }
